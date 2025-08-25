@@ -1,0 +1,14 @@
+# Fichiers d'environnement
+.env
+
+# Environnement virtuel Python
+/venv/
+
+# Caches Python
+__pycache__/
+*.pyc
+
+# Fichiers generes par PyInstaller
+/build/
+/dist/
+*.spec
