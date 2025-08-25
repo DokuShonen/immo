@@ -1,6 +1,6 @@
 -- Création des tables
 CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
@@ -15,7 +15,7 @@ CREATE TABLE users (
 );
 
 CREATE TABLE properties (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY AUTO_INCREMENT,
     bailleur_id INTEGER REFERENCES users(id),
     agent_id INTEGER REFERENCES users(id),
     titre VARCHAR(255) NOT NULL,
@@ -32,14 +32,14 @@ CREATE TABLE properties (
 );
 
 CREATE TABLE property_images (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY AUTO_INCREMENT,
     property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
     image_path VARCHAR(500) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE favorites (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY AUTO_INCREMENT,
     client_id INTEGER REFERENCES users(id),
     property_id INTEGER REFERENCES properties(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -47,7 +47,7 @@ CREATE TABLE favorites (
 );
 
 CREATE TABLE appointments (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY AUTO_INCREMENT,
     client_id INTEGER REFERENCES users(id),
     property_id INTEGER REFERENCES properties(id),
     agent_id INTEGER REFERENCES users(id),
@@ -59,7 +59,7 @@ CREATE TABLE appointments (
 );
 
 CREATE TABLE client_assignments (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY AUTO_INCREMENT,
     client_id INTEGER REFERENCES users(id),
     agent_id INTEGER REFERENCES users(id),
     assigned_by INTEGER REFERENCES users(id),

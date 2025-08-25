@@ -1,7 +1,8 @@
-import psycopg2
+import mysql.connector
 import os
 from contextlib import contextmanager
 import streamlit as st
+from urllib.parse import urlparse
 
 # DANS utils/database.py, REMPLACEZ LA CLASSE EXISTANTE PAR CELLE-CI
 
@@ -13,12 +14,20 @@ class DatabaseManager:
     def get_db_connection(self):
         conn = None
         try:
-            conn = psycopg2.connect(self.connection_string)
+            # On parse l'URL de la base de donnees pour extraire les composants
+            result = urlparse(self.connection_string)
+            conn = mysql.connector.connect(
+                host=result.hostname,
+                user=result.username,
+                password=result.password,
+                database=result.path.strip('/'), # Enleve le / au debut du chemin
+                port=result.port or 3306
+            )
             yield conn
-        except Exception as e:
+        except mysql.connector.Error as e:
             if conn:
                 conn.rollback()
-            st.error(f"Erreur de base de données: {str(e)}")
+            st.error(f"Erreur de base de donnees MySQL: {str(e)}")
             raise
         finally:
             if conn:
@@ -35,7 +44,7 @@ class DatabaseManager:
             elif fetch == 'all':
                 result = cursor.fetchall()
             
-            # Si c'était une opération d'écriture, on valide la transaction.
+            # Si c'etait une operation d'ecriture, on valide la transaction.
             if query.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
                 conn.commit()
             
