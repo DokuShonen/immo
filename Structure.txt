@@ -1,0 +1,11 @@
+/
+├── app.py                 # Application principale Streamlit
+├── utils/
+│   ├── auth.py           # Système d'authentification
+│   ├── database.py       # Gestionnaire de base de données PostgreSQL
+│   └── reporting.py      # Moteur d'analytics et reporting
+├── uploads/properties/   # Dossier pour les images des propriétés
+├── .streamlit/config.toml # Configuration Streamlit
+├── pyproject.toml        # Dépendances Python
+├── README.md             # Documentation utilisateur
+└── replit.md            # Documentation technique

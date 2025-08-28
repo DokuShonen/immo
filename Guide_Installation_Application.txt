@@ -1,0 +1,91 @@
+
+============================================================
+         GUIDE D’INSTALLATION DE L’APPLICATION
+============================================================
+
+Félicitations ! C'est fantastique d'entendre que tout fonctionne correctement.
+Vous avez mené un long et difficile parcours de débogage et vous avez réussi.
+
+------------------------------------------------------------
+Objectif : Transférer ou installer l’application sur un nouvel ordinateur.
+Ce document est votre guide de déploiement officiel.
+------------------------------------------------------------
+
+🔧 PRÉREQUIS SUR LA NOUVELLE MACHINE
+------------------------------------------------------------
+1. Installer Python :
+   - Télécharger Python 3.11 depuis https://www.python.org/
+   - Pendant l’installation, cocher impérativement :
+     ✔ "Add python.exe to PATH"
+
+2. Installer PostgreSQL :
+   - Télécharger depuis https://www.postgresql.org/
+   - Choisir un mot de passe pour l'utilisateur **postgres** et le **noter**
+   - Vérifier que PostgreSQL est installé en tant que service (par défaut)
+
+------------------------------------------------------------
+📦 PRÉPARATION ET TRANSFERT DU PROJET
+------------------------------------------------------------
+Depuis l’ordinateur source :
+
+1. Aller dans le dossier du projet :  
+   `C:\wamp64\www\projets\Immo`
+
+2. Faire un clic droit sur le dossier **Immo**
+
+3. Choisir :  
+   ➜ "Envoyer vers" → "Dossier compressé (zippé)"
+
+4. Un fichier **Immo.zip** est généré
+
+5. Transférer ce fichier vers la nouvelle machine  
+   (clé USB, email, Google Drive…)
+
+------------------------------------------------------------
+🛠️ INSTALLATION ET CONFIGURATION
+------------------------------------------------------------
+1. Dézipper le fichier **Immo.zip** sur la nouvelle machine (ex. : sur le Bureau)
+
+2. Configurer la base de données :
+   - Ouvrir **pgAdmin 4**
+   - Se connecter avec le mot de passe PostgreSQL
+   - Ouvrir le **Query Tool** sur la base de données `postgres`
+   - Ouvrir le fichier :
+     `7. SCHÉMA DE BASE DE DONNÉES PostgreSQL.sql` (dans le dossier dézippé)
+   - Copier le contenu SQL et le coller dans le Query Tool
+   - Exécuter pour créer toutes les tables
+
+3. Modifier le fichier `.env` :
+   - Ouvrir le dossier **Immo**
+   - Éditer le fichier `.env` avec le Bloc-notes
+   - Modifier la ligne suivante avec le nouveau mot de passe :
+
+     ```
+     DATABASE_URL=postgresql://postgres:LE_NOUVEAU_MOT_DE_PASSE@localhost:5432/postgres
+     ```
+
+   - Sauvegarder le fichier
+
+------------------------------------------------------------
+🚀 LANCEMENT DE L’APPLICATION
+------------------------------------------------------------
+1. Ouvrir le dossier **Immo**
+
+2. Double-cliquer sur le fichier :
+   ➜ `lancer_application.bat`
+
+3. Une console noire s’ouvre et lance l’application
+
+4. Après quelques secondes, le navigateur par défaut s’ouvre sur :
+   ➜ http://127.0.0.1:5000/
+
+5. L'application est prête à être utilisée 🎉
+
+------------------------------------------------------------
+📋 RÉCAPITULATIF POUR L’UTILISATEUR FINAL
+------------------------------------------------------------
+✔ Installer Python et PostgreSQL  
+✔ Dézipper le dossier du projet  
+✔ Exécuter le script SQL pour créer les tables  
+✔ Mettre à jour le mot de passe PostgreSQL dans `.env`  
+✔ Double-cliquer sur `lancer_application.bat`  
