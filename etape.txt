@@ -1,0 +1,34 @@
+# --- 1. Navigation ---
+cd C:\wamp64\www\projets\Immo
+
+# --- 2. Environnement Virtuel ---
+python -m venv venv
+.\venv\Scripts\activate
+
+# --- 3. Dépendances ---
+pip install streamlit psycopg2-binary bcrypt pandas plotly pillow python-dotenv
+
+# --- 4. Fichier .env (à modifier avec votre mot de passe) ---
+Set-Content -Path .env -Value 'DATABASE_URL="postgresql://postgres:VOTRE_MOT_DE_PASSE@localhost:5432/postgres"'
+
+# --- 5. Seeding (après avoir créé les tables dans pgAdmin) ---
+python seed_database.py
+
+# --- 6. Lancement ---
+python -m streamlit run app.py --server.port 5000
+
+# --- 7.Execution ----
+Ouvrir lancer_application.bat
+
+
+------------------------------------------------------
+#ETAPE D'INSTALLATION
+
+"Pour installer l'application :
+Installe Python 3.11 sur ton ordinateur depuis python.org (assure-toi de cocher "Add to PATH").
+Installe PostgreSQL sur ton ordinateur.
+Dézippe le fichier Immo.zip où tu veux (par exemple, sur ton bureau).
+Ouvre le dossier Immo et double-clique sur le fichier lancer_application.bat.
+
+
+Une console noire s'ouvrira, lancera l'application, et ton navigateur s'ouvrira automatiquement sur la bonne page. Ne ferme pas la console noire tant que tu utilises l'application !"
