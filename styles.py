@@ -309,16 +309,14 @@ label[data-testid="stWidgetLabel"] {
 /* Popups : dialogues modales (connexion / inscription)               */
 /* ------------------------------------------------------------------ */
 [data-testid="stDialog"] {
+    background: rgba(46, 32, 22, 0.45) !important;
+    backdrop-filter: blur(3px) !important;
+}
+[data-testid="stDialog"] [role="dialog"] {
     background: var(--cream) !important;
     border: 2px solid var(--line) !important;
     border-radius: 26px !important;
     box-shadow: 0 44px 90px -34px rgba(46, 32, 22, 0.55) !important;
-}
-[data-testid="stDialog"] [data-testid="stDialogBody"] {
-    background: var(--cream) !important;
-}
-[data-testid="stDialog"] [data-testid="stDialogHeader"] * {
-    font-family: var(--font-display) !important;
 }
 [data-testid="stDialog"] div[data-testid="stCustomComponentV1"] [data-testid="stIconButton"] button {
     color: var(--coral-strong);
