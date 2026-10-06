@@ -107,7 +107,6 @@ def show_public_access():
 
 @st.dialog("Connexion", width="small", icon=":material/lock:")
 def login_dialog():
-    st.caption("Comptes de démo : ``admin``, ``agent1``, ``bailleur1``, ``client1`` — mot de passe ``password``.")
     with st.form("public_login_form"):
         username = st.text_input("Nom d'utilisateur", placeholder="ex. client1")
         password = st.text_input("Mot de passe", type="password", placeholder="••••••••")

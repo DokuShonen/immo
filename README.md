@@ -51,13 +51,6 @@ Notre plateforme est conçue autour d'un système de rôles robuste, offrant une
 3. **Inscrivez-vous** en cliquant sur le bouton "S'inscrire" pour débloquer les fonctionnalités de prise de rendez-vous et de gestion des favoris.
 4. **Connectez-vous** pour accéder à votre espace personnel.
 
-### Comptes de Test
-Pour une démonstration rapide, vous pouvez utiliser les comptes suivants :
-- **Manager**: `admin` / `password`
-- **Agent**: `agent1` / `password`
-- **Bailleur**: `bailleur1` / `password`
-- **Client**: `client1` / `password`
-
 ---
 
 ## Technologies Utilisées
