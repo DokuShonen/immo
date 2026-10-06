@@ -60,7 +60,7 @@ def notify(level, message):
 def main():
     st.set_page_config(
         page_title="ImmoPro – Gestion Immobilière",
-        page_icon="static/logo.png",
+        page_icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo.png"),
         layout="wide",
         initial_sidebar_state="expanded",
     )
