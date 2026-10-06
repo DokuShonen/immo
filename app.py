@@ -107,9 +107,19 @@ def show_public_access():
 
 @st.dialog("Connexion", width="small", icon=":material/lock:")
 def login_dialog():
+    st.markdown(
+        """
+        <div style="text-align:center; margin-bottom:1.2rem;">
+            <div style="font-size:2.2rem;">🏠</div>
+            <h2 style="margin:.3rem 0 .2rem; font-family:'Fredoka','Nunito',sans-serif;">Bon retour</h2>
+            <p style="color:#8a7a6a; margin:0; font-size:.9rem;">Connectez-vous pour accéder à votre espace.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     with st.form("public_login_form"):
-        username = st.text_input("Nom d'utilisateur", placeholder="ex. client1")
-        password = st.text_input("Mot de passe", type="password", placeholder="••••••••")
+        username = st.text_input("Nom d'utilisateur", placeholder="Votre identifiant")
+        password = st.text_input("Mot de passe", type="password", placeholder="Votre mot de passe")
         submitted = st.form_submit_button("Me connecter", width='stretch', type="primary")
         if submitted:
             if username and password:
@@ -127,6 +137,16 @@ def login_dialog():
 
 @st.dialog("Créer un compte", width="medium", icon=":material/star:")
 def register_dialog():
+    st.markdown(
+        """
+        <div style="text-align:center; margin-bottom:1.2rem;">
+            <div style="font-size:2.2rem;">✨</div>
+            <h2 style="margin:.3rem 0 .2rem; font-family:'Fredoka','Nunito',sans-serif;">Créez votre compte</h2>
+            <p style="color:#8a7a6a; margin:0; font-size:.9rem;">Rejoignez ImmoPro en moins d'une minute.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     with st.form("public_register_form"):
         role = st.selectbox("Type de compte", ["client", "bailleur"],
                             help="Client : recherchez et réservez des biens. Bailleur : mettez vos biens en ligne.")
