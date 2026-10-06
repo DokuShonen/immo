@@ -60,7 +60,7 @@ def notify(level, message):
 def main():
     st.set_page_config(
         page_title="ImmoPro – Gestion Immobilière",
-        page_icon=":material/home:",
+        page_icon="static/logo.png",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -110,7 +110,7 @@ def login_dialog():
     st.markdown(
         """
         <div style="text-align:center; margin-bottom:1.2rem;">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#E9643B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
+            <svg width="44" height="44" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#E9643B"/><path d="M14 34 L32 18 L50 34" fill="none" stroke="#FBF1E4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 31 V46 H44 V31" fill="none" stroke="#FBF1E4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="46" cy="15" r="4.5" fill="#FBF1E4"/></svg>
             <h2 style="margin:.3rem 0 .2rem; font-family:'Fredoka','Nunito',sans-serif;">Bon retour</h2>
             <p style="color:#8a7a6a; margin:0; font-size:.9rem;">Connectez-vous pour accéder à votre espace.</p>
         </div>
@@ -140,7 +140,7 @@ def register_dialog():
     st.markdown(
         """
         <div style="text-align:center; margin-bottom:1.2rem;">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#E9643B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="4"/></svg>
+            <svg width="44" height="44" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#E9643B"/><path d="M14 34 L32 18 L50 34" fill="none" stroke="#FBF1E4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 31 V46 H44 V31" fill="none" stroke="#FBF1E4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="46" cy="15" r="4.5" fill="#FBF1E4"/></svg>
             <h2 style="margin:.3rem 0 .2rem; font-family:'Fredoka','Nunito',sans-serif;">Créez votre compte</h2>
             <p style="color:#8a7a6a; margin:0; font-size:.9rem;">Rejoignez ImmoPro en moins d'une minute.</p>
         </div>

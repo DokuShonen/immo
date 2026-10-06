@@ -71,7 +71,7 @@ def show_result_bar(nombre, meta=""):
 def show_sidebar_brand():
     st.markdown("""
     <div class="side-brand">
-        <div class="logo"><i class="fas fa-home"></i></div>
+        <div class="logo"><svg width="26" height="26" viewBox="0 0 64 64"><path d="M14 34 L32 18 L50 34" fill="none" stroke="#FFF5E8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 31 V46 H44 V31" fill="none" stroke="#FFF5E8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="46" cy="15" r="5" fill="#FFF5E8"/></svg></div>
         <div>
             <div class="brand-name">ImmoPro</div>
             <div class="brand-sub">Trouver · Vendre · Vivre</div>
