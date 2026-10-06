@@ -11,7 +11,12 @@ class DatabaseManager:
     def __init__(self):
         self.connection_string = os.getenv('DATABASE_URL')
         if not self.connection_string:
-            raise ValueError("DATABASE_URL non définie dans les variables d'environnement")
+            try:
+                self.connection_string = st.secrets["DATABASE_URL"]
+            except Exception:
+                pass
+        if not self.connection_string:
+            raise ValueError("DATABASE_URL non définie dans les variables d'environnement ou st.secrets")
     
     @contextmanager
     def get_db_connection(self):
