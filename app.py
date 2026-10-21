@@ -82,6 +82,22 @@ def erreur_attendue(exc, message="L operation n a pas pu aboutir. Reessayez dans
     st.error(message)
 
 
+def base_configuree():
+    """Indique si la connexion a la base est definie.
+
+    La chaine de connexion est lue directement ici, sans passer par la
+    classe DatabaseManager : le controle reste ainsi valable meme si le
+    module de la base est une version differente de celle du depot.
+    """
+    url = os.getenv('DATABASE_URL')
+    if not url:
+        try:
+            url = st.secrets["DATABASE_URL"]
+        except Exception:
+            url = None
+    return bool(url)
+
+
 # --- Fonctions d'affichage des vues (Pages) ---
 
 def main():
@@ -95,7 +111,7 @@ def main():
     inject_styles()
     show_header()
 
-    if not db_manager.est_configuree():
+    if not base_configuree():
         st.error(
             "La connexion à la base de données n'est pas configurée. "
             "Renseignez la variable DATABASE_URL dans les secrets de "
