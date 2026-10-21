@@ -5,3 +5,6 @@ __pycache__/
 uploads/
 .streamlit/secrets.toml
 .pytest_cache/
+
+# Liste des comptes de la base locale : ne pas versionner.
+UTILISATEURS.md
