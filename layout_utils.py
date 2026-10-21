@@ -81,13 +81,21 @@ def show_sidebar_brand():
 
 
 def show_sidebar_user(user):
-    initials = ((user['prenom'] or user['nom'])[:1] + user['nom'][:1]).upper()
+    # Le nom et le prenom proviennent du formulaire d'inscription : ils
+    # sont echappes avant d'etre places dans la page.
+    from html import escape
+
+    nom = escape(user['nom'] or '', quote=True)
+    prenom = escape(user['prenom'] or '', quote=True)
+    role = escape(ROLE_LABELS.get(user['role'], user['role'] or '').upper(), quote=True)
+    initiales = escape(((user['prenom'] or user['nom'] or '?')[:1] + (user['nom'] or '?')[:1]).upper(), quote=True)
+
     st.markdown(f"""
     <div class="side-user">
-        <div class="side-avatar">{initials}</div>
+        <div class="side-avatar">{initiales}</div>
         <div>
-            <div class="side-name">{user['nom']} {user['prenom'] or ''}</div>
-            <div class="side-role">{ROLE_LABELS.get(user['role'], user['role']).upper()}</div>
+            <div class="side-name">{nom} {prenom}</div>
+            <div class="side-role">{role}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
