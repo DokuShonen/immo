@@ -11,5 +11,8 @@ dependencies = [
     "pillow>=10.0.0"
 ]
 
+[tool.streamlit]
+pythonVersion = "3.12"
+
 [tool.uv]
 dev-dependencies = []
