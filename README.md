@@ -1,4 +1,4 @@
-# ImmoPro — Plateforme de Gestion Immobilière
+# ImmoPro : Plateforme de Gestion Immobilière
 
 Bienvenue sur la Plateforme de Gestion Immobilière, une solution web complète conçue pour simplifier et optimiser toutes les facettes de la gestion de biens immobiliers. Que vous soyez un client à la recherche de la maison de vos rêves, un bailleur souhaitant lister ses propriétés, un agent gérant un portefeuille ou un manager supervisant l'ensemble des opérations, notre plateforme offre des outils puissants et intuitifs adaptés à chaque rôle.
 
@@ -103,6 +103,9 @@ rendu de chaque espace de l'interface.
 - L'inscription publique n'accepte que les rôles `client` et `bailleur`.
 - Toutes les requêtes SQL sont paramétrées, y compris les tris et les
   filtres.
+- Les photos importées sont stockées en base sous forme d'octets, avec un
+  format et un poids contrôlés : elles survivent au redémarrage de
+  l'instance et ne peuvent pas provenir d'un type de fichier non prévu.
 
 ---
 

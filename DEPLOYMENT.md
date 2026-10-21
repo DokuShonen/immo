@@ -41,10 +41,23 @@ Changez ces identifiants avant toute présentation publique.
 - Pas de paiement en ligne : la prise de rendez-vous est enregistrée, mais
   aucun règlement n'est encaissé.
 - Pas d'envoi d'e-mail : les confirmations restent dans l'interface.
-- Pas de téléversement de fichiers depuis le navigateur vers un stockage
-  durable : les photos importées sont conservées sur le disque de l'instance,
-  ce qui ne survit pas à un redémarrage. Pour la production, il faudrait un
-  stockage objet.
+- Les photos importées sont conservées dans la base, sous forme d'octets :
+  elles survivent donc au redémarrage de l'instance. Chaque image est
+  limitée à 4 Mo et chaque annonce à 8 photos.
+
+### Migrations
+
+Le schéma évolue avec des scripts versionnés dans `migrations/`, appliqués
+par `migrate.py`. Sur une base déjà en service :
+
+```bash
+./venv/bin/python migrate.py            # applique les migrations en attente
+./venv/bin/python migrate.py --status   # affiche l'état sans rien modifier
+```
+
+La migration `002_images_en_base.sql` ajoute les colonnes qui stockent les
+photos en base : elle est indispensable avant la mise en ligne, sinon les
+images importées ne sont conservées que sur le disque de l'instance.
 
 ## Exécution en local
 

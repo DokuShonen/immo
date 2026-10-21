@@ -39,6 +39,20 @@ DEFAULT_IMAGES = ["photo-1564013799919-ab600027ffc6", "photo-1570129477492-45c00
 
 EXTENSIONS_AUTORISEES = (".png", ".jpg", ".jpeg", ".webp", ".avif")
 
+# Types d'images acceptes, par extension.
+MIMES_AUTORISES = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "avif": "image/avif",
+}
+
+# Garde-fous : une annonce ne peut pas remplir la base avec des photos
+# trop lourdes ou trop nombreuses.
+TAILLE_MAX_IMAGE = 4 * 1024 * 1024
+NOMBRE_MAX_IMAGES = 8
+
 
 def _img_url(photo_id, w=900):
     return (
@@ -76,24 +90,73 @@ def _data_uri(chemin, modification):
     return f"data:image/{mime};base64," + base64.b64encode(contenu).decode("ascii")
 
 
+def _mime_pour(nom):
+    extension = os.path.splitext(nom or "")[1].lower().lstrip(".")
+    return MIMES_AUTORISES.get(extension, "image/jpeg")
+
+
+def _source(chemin=None, donnees=None, mime=None, identifiant=None):
+    """Description d'une image, qu'elle vienne du disque ou de la base."""
+    return {
+        "chemin": chemin,
+        "donnees": donnees,
+        "mime": mime,
+        "id": identifiant,
+    }
+
+
+def _uri_source(source):
+    """URL de donnees d'une image.
+
+    L'image est d'abord cherchee dans la base : c'est le seul endroit qui
+    survit au redemarrage d'une instance cloud. Le disque sert de repli
+    pour les photos importees avant cette evolution.
+    """
+    if not source:
+        return None
+
+    donnees = source.get("donnees")
+    if donnees:
+        mime = source.get("mime") or "image/jpeg"
+        return ("data:" + mime + ";base64,"
+                + base64.b64encode(donnees).decode("ascii"))
+
+    chemin = source.get("chemin")
+    if chemin:
+        try:
+            return _data_uri(chemin, os.path.getmtime(chemin))
+        except OSError:
+            return None
+
+    return None
+
+
 def get_uploaded_images(property_id):
-    """Chemins des images uploadees d'une propriete, d'apres la table
-    property_images, avec repli sur le contenu du dossier."""
+    """Images d'une propriete, d'apres la table property_images, avec
+    repli sur le contenu du dossier."""
     if not property_id:
         return []
-    chemins = []
+
+    sources = []
     try:
         result = db_manager.execute_query(
-            "SELECT image_path FROM property_images WHERE property_id = %s ORDER BY id",
+            "SELECT id, image_path, image_data, mime_type FROM property_images "
+            "WHERE property_id = %s ORDER BY id",
             (property_id,),
             fetch='all',
         )
-        chemins = [r['image_path'] for r in result] if result else []
+        for row in result or []:
+            sources.append(_source(
+                chemin=row['image_path'],
+                donnees=row['image_data'],
+                mime=row['mime_type'],
+                identifiant=row['id'],
+            ))
     except DatabaseError:
-        chemins = []
+        sources = []
 
-    if chemins:
-        return chemins
+    if sources:
+        return sources
 
     prop_dir = os.path.join(UPLOAD_DIR, str(property_id))
     if not os.path.isdir(prop_dir):
@@ -102,7 +165,7 @@ def get_uploaded_images(property_id):
         f for f in os.listdir(prop_dir)
         if f.lower().endswith(EXTENSIONS_AUTORISEES)
     )
-    return [os.path.join(prop_dir, f) for f in fichiers]
+    return [_source(chemin=os.path.join(prop_dir, f)) for f in fichiers]
 
 
 def get_uploaded_images_map(property_ids):
@@ -117,8 +180,8 @@ def get_uploaded_images_map(property_ids):
 
     try:
         result = db_manager.execute_query(
-            "SELECT property_id, image_path FROM property_images "
-            "WHERE property_id = ANY(%s) ORDER BY id",
+            "SELECT id, property_id, image_path, image_data, mime_type "
+            "FROM property_images WHERE property_id = ANY(%s) ORDER BY id",
             (ids,),
             fetch='all',
         )
@@ -127,7 +190,12 @@ def get_uploaded_images_map(property_ids):
 
     images = {}
     for row in result or []:
-        images.setdefault(row['property_id'], []).append(row['image_path'])
+        images.setdefault(row['property_id'], []).append(_source(
+            chemin=row['image_path'],
+            donnees=row['image_data'],
+            mime=row['mime_type'],
+            identifiant=row['id'],
+        ))
 
     for identifiant in ids:
         if identifiant not in images:
@@ -139,40 +207,64 @@ def get_uploaded_images_map(property_ids):
                 )
                 if fichiers:
                     images[identifiant] = [
-                        os.path.join(prop_dir, f) for f in fichiers]
+                        _source(chemin=os.path.join(prop_dir, f))
+                        for f in fichiers]
 
     return images
 
 
 def save_image_set(property_id, uploaded_files):
-    """Enregistre les images d'une propriete : sur le disque et en base."""
+    """Enregistre les images d'une propriete : en base et sur le disque.
+
+    Les octets sont conserves en base : sur une instance cloud, le disque
+    local est efface a chaque redemarrage. Le fichier sur le disque reste
+    utile en developpement et pour les annonces importees avant.
+    """
     if not uploaded_files:
         return []
 
     prop_dir = os.path.join(UPLOAD_DIR, str(property_id))
-    os.makedirs(prop_dir, exist_ok=True)
-    ecrits = []
+    sources = []
 
-    for i, f in enumerate(uploaded_files):
-        nom = f"{i}_{_nom_sur(f.name)}"
-        chemin = os.path.join(prop_dir, nom)
+    for i, f in enumerate(list(uploaded_files)[:NOMBRE_MAX_IMAGES]):
+        nom = _nom_sur(f.name)
+        donnees = None
         try:
-            with open(chemin, "wb") as out:
-                out.write(f.getbuffer())
-        except OSError:
-            continue
-        ecrits.append(chemin)
+            donnees = f.getvalue()
+        except Exception:
+            try:
+                donnees = bytes(f.getbuffer())
+            except Exception:
+                donnees = None
 
-    for chemin in ecrits:
+        if not donnees:
+            continue
+        if len(donnees) > TAILLE_MAX_IMAGE:
+            continue
+
+        chemin = os.path.join(prop_dir, f"{i}_{nom}")
+        try:
+            os.makedirs(prop_dir, exist_ok=True)
+            with open(chemin, "wb") as out:
+                out.write(donnees)
+        except OSError:
+            chemin = ""
+
+        mime = _mime_pour(nom)
         try:
             db_manager.execute_query(
-                "INSERT INTO property_images (property_id, image_path) VALUES (%s, %s)",
-                (property_id, chemin),
+                "INSERT INTO property_images "
+                "(property_id, image_path, image_data, mime_type, file_name) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (property_id, chemin or f"import/{i}_{nom}", donnees, mime, nom),
             )
         except DatabaseError:
             pass
 
-    return ecrits
+        sources.append(_source(chemin=chemin or None, donnees=donnees,
+                               mime=mime))
+
+    return sources
 
 
 def property_image_uri(prop, index=0, images=None):
@@ -188,11 +280,15 @@ def property_image_uri(prop, index=0, images=None):
     if images is None:
         images = get_uploaded_images(identifiant)
     if images and index < len(images):
-        chemin = images[index]
-        try:
-            uri = _data_uri(chemin, os.path.getmtime(chemin))
-        except OSError:
-            uri = None
+        source = images[index]
+        if isinstance(source, dict):
+            uri = _uri_source(source)
+        else:
+            # compatibilite : une liste de chemins de fichiers
+            try:
+                uri = _data_uri(source, os.path.getmtime(source))
+            except OSError:
+                uri = None
         if uri:
             return uri
 

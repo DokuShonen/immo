@@ -35,6 +35,9 @@ CREATE TABLE property_images (
     id SERIAL PRIMARY KEY,
     property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
     image_path VARCHAR(500) NOT NULL,
+    image_data BYTEA,
+    mime_type VARCHAR(80),
+    file_name VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

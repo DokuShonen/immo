@@ -95,6 +95,14 @@ def main():
     inject_styles()
     show_header()
 
+    if not db_manager.est_configuree():
+        st.error(
+            "La connexion à la base de données n'est pas configurée. "
+            "Renseignez la variable DATABASE_URL dans les secrets de "
+            "l'application, puis rechargez la page."
+        )
+        st.stop()
+
     if 'user' not in st.session_state:
         st.session_state.user = None
     if 'page' not in st.session_state:
@@ -384,9 +392,10 @@ def _show_property_details(prop, pid, dk, ak, user_role, public_view, images=Non
         if images:
             st.markdown('<div style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin:4px 0 8px;">Photos</div>', unsafe_allow_html=True)
             img_cols = st.columns(min(len(images), 3))
-            for i, img in enumerate(images[:3]):
+            for i in range(min(len(images), 3)):
                 with img_cols[i]:
-                    st.image(img, width='stretch')
+                    st.image(property_image_uri(prop, index=i, images=images),
+                             width='stretch')
 
         details_cols = st.columns(2)
         with details_cols[0]:

@@ -20,7 +20,10 @@ sys.path.insert(0, BASE_DIR)
 # sont ignores plutot que d'echouer bruyamment.
 from utils.auth import ROLES_PUBLICS, auth_manager  # noqa: E402
 from utils.database import db_manager  # noqa: E402
-from utils.media import _nom_sur, fmt_prix, property_image_uri  # noqa: E402
+from utils.media import (  # noqa: E402
+    _nom_sur, fmt_prix, get_uploaded_images_map, property_image_uri,
+    save_image_set,
+)
 
 if not os.getenv("DATABASE_URL"):
     raise unittest.SkipTest("DATABASE_URL n'est pas definie.")
@@ -240,6 +243,72 @@ class TestMedia(unittest.TestCase):
         propriete = {'id': 999999, 'type_bien': 'Maison'}
         # Aucune image importee : on retombe sur la photographie de repli.
         self.assertTrue(property_image_uri(propriete).startswith("https://"))
+
+
+class FauxFichierImporte:
+    """Equivalent minimal d'un fichier televerse par Streamlit."""
+
+    def __init__(self, nom, contenu):
+        self.name = nom
+        self._contenu = contenu
+
+    def getvalue(self):
+        return self._contenu
+
+
+class TestImagesEnBase(BaseMetier):
+    """Les photos importees doivent survivre au redemarrage d'une
+    instance cloud : elles sont donc conservees en base, pas seulement
+    sur le disque."""
+
+    PNG = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+        b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    def _creer_un_bien(self):
+        bien = db_manager.execute_query(
+            "INSERT INTO properties (titre, description, type_bien, usage_possible, "
+            "transaction_type, prix, taille, situation_geo, bailleur_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            ("Bien de test", "pytest", "Maison", " habitation", "vente",
+             100000, 80, "Ouagadougou", self.bailleur['id']),
+            fetch='one',
+        )
+        return bien['id']
+
+    def test_une_photo_importee_est_conservee_en_base(self):
+        identifiant = self._creer_un_bien()
+        try:
+            save_image_set(identifiant, [FauxFichierImporte("maison.png", self.PNG)])
+
+            ligne = db_manager.execute_query(
+                "SELECT image_data, mime_type FROM property_images "
+                "WHERE property_id = %s ORDER BY id DESC LIMIT 1",
+                (identifiant,), fetch='one',
+            )
+            self.assertIsNotNone(ligne)
+            self.assertEqual(bytes(ligne['image_data']), self.PNG)
+            self.assertEqual(ligne['mime_type'], "image/png")
+        finally:
+            db_manager.execute_query(
+                "DELETE FROM properties WHERE description = %s", ("pytest",))
+
+    def test_une_photo_est_relu_depuis_la_base(self):
+        identifiant = self._creer_un_bien()
+        try:
+            save_image_set(identifiant, [FauxFichierImporte("maison.png", self.PNG)])
+
+            images = get_uploaded_images_map([identifiant])
+            self.assertIn(identifiant, images)
+
+            uri = property_image_uri({'id': identifiant, 'type_bien': 'Maison'},
+                                     images=images[identifiant])
+            self.assertTrue(uri.startswith("data:image/png;base64,"))
+        finally:
+            db_manager.execute_query(
+                "DELETE FROM properties WHERE description = %s", ("pytest",))
 
 
 if __name__ == "__main__":

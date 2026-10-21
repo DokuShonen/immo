@@ -33,12 +33,17 @@ class DatabaseManager:
                 self.connection_string = st.secrets["DATABASE_URL"]
             except Exception:
                 pass
-        if not self.connection_string:
-            raise ValueError(
-                "DATABASE_URL non définie dans les variables d'environnement ou st.secrets"
-            )
         self._pool = None
         self._pool_lock = threading.Lock()
+
+    def est_configuree(self):
+        """Indique si la connexion a la base est definie.
+
+        L'application peut demarrer sans base (page d'accueil) : c'est
+        l'utilisateur qui voit alors un message explicite plutot qu'une
+        trace d'erreur Python.
+        """
+        return bool(self.connection_string)
 
     # ------------------------------------------------------------------
     # Connexions
@@ -50,6 +55,12 @@ class DatabaseManager:
         Ouvrir une connexion a chaque requete coute environ une seconde
         quand la base est distante : le pool supprime ce cout.
         """
+        if not self.connection_string:
+            raise DatabaseError(
+                "La connexion à la base de données n'est pas configurée. "
+                "Renseignez DATABASE_URL dans les variables d'environnement "
+                "ou dans les secrets de l'application."
+            )
         if self._pool is None:
             with self._pool_lock:
                 if self._pool is None:
