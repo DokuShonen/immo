@@ -1,5 +1,10 @@
-# utils/media.py — Images des propriétés et formatage d'affichage.
+"""Images des proprietes et formatage de l'affichage."""
+import base64
+import functools
 import os
+import re
+
+from utils.database import DatabaseError, db_manager
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads", "properties")
@@ -32,73 +37,152 @@ TYPE_IMAGES = {
 
 DEFAULT_IMAGES = ["photo-1564013799919-ab600027ffc6", "photo-1570129477492-45c003edd2be"]
 
+EXTENSIONS_AUTORISEES = (".png", ".jpg", ".jpeg", ".webp", ".avif")
 
-def _img_url(photo_id, seed, w=900):
+
+def _img_url(photo_id, w=900):
     return (
         f"https://images.unsplash.com/{photo_id}"
         f"?auto=format&fit=crop&w={w}&q=62&sat=-12"
     )
 
 
+def _nom_sur(nom_original):
+    """Nom de fichier sur : seuls les caracteres alphanumeriques sont
+    conserves, ce qui supprime toute tentative de traversee de repertoire
+    et les espaces qui casseraient l'URL."""
+    base = os.path.basename(nom_original or "")
+    extension = os.path.splitext(base)[1].lower()
+    if extension not in EXTENSIONS_AUTORISEES:
+        extension = ".jpg"
+    rafraichir = re.sub(r"[^A-Za-z0-9_-]+", "-", os.path.splitext(base)[0]).strip("-")
+    if not rafraichir:
+        rafraichir = "photo"
+    return rafraichir[:60] + extension
+
+
+@functools.lru_cache(maxsize=256)
+def _data_uri(chemin, modification):
+    """Transforme un fichier image en URL de donnees, exploitable par le
+    navigateur dans un attribut src."""
+    try:
+        with open(chemin, "rb") as f:
+            contenu = f.read()
+    except OSError:
+        return None
+    extension = os.path.splitext(chemin)[1].lower().lstrip(".")
+    mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp",
+            "avif": "avif"}.get(extension, "jpeg")
+    return f"data:image/{mime};base64," + base64.b64encode(contenu).decode("ascii")
+
+
 def get_uploaded_images(property_id):
-    """Retourne la liste des chemins d'images uploadées pour une propriété."""
+    """Chemins des images uploadees d'une propriete, d'apres la table
+    property_images, avec repli sur le contenu du dossier."""
     if not property_id:
         return []
+    chemins = []
+    try:
+        result = db_manager.execute_query(
+            "SELECT image_path FROM property_images WHERE property_id = %s ORDER BY id",
+            (property_id,),
+            fetch='all',
+        )
+        chemins = [r['image_path'] for r in result] if result else []
+    except DatabaseError:
+        chemins = []
+
+    if chemins:
+        return chemins
+
     prop_dir = os.path.join(UPLOAD_DIR, str(property_id))
     if not os.path.isdir(prop_dir):
         return []
-    files = sorted(
+    fichiers = sorted(
         f for f in os.listdir(prop_dir)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
+        if f.lower().endswith(EXTENSIONS_AUTORISEES)
     )
-    return [os.path.join(prop_dir, f) for f in files]
+    return [os.path.join(prop_dir, f) for f in fichiers]
 
 
 def save_image_set(property_id, uploaded_files):
-    """Sauvegarde les fichiers uploadés (Streamlit UploadedFile) sur disque."""
+    """Enregistre les images d'une propriete : sur le disque et en base."""
     if not uploaded_files:
         return []
+
     prop_dir = os.path.join(UPLOAD_DIR, str(property_id))
     os.makedirs(prop_dir, exist_ok=True)
-    written = []
+    ecrits = []
+
     for i, f in enumerate(uploaded_files):
-        ext = os.path.splitext(f.name)[1].lower()
-        file_name = f"{i}_{f.name}"
-        file_path = os.path.join(prop_dir, file_name)
-        with open(file_path, "wb") as out:
-            out.write(f.getbuffer())
-        written.append(file_path)
-    return written
+        nom = f"{i}_{_nom_sur(f.name)}"
+        chemin = os.path.join(prop_dir, nom)
+        try:
+            with open(chemin, "wb") as out:
+                out.write(f.getbuffer())
+        except OSError:
+            continue
+        ecrits.append(chemin)
+
+    for chemin in ecrits:
+        try:
+            db_manager.execute_query(
+                "INSERT INTO property_images (property_id, image_path) VALUES (%s, %s)",
+                (property_id, chemin),
+            )
+        except DatabaseError:
+            pass
+
+    return ecrits
 
 
 def property_image_uri(prop, index=0):
-    """Image principale d'une propriété. Priorité aux uploads, sinon photo Unsplash par type."""
-    uploaded = get_uploaded_images(prop[0])
-    if uploaded and index < len(uploaded):
-        return uploaded[index]
-    type_bien = prop[4] if len(prop) > 4 and prop[4] else "Maison"
+    """Image principale d'une propriete, pretee a etre placee dans un src.
+
+    Les images importees sont servies en URL de donnees : le navigateur
+    peut les afficher, ce qu'un chemin de fichier local ne permettait pas.
+    """
+    identifiant = prop['id'] if isinstance(prop, dict) else prop[0]
+    type_bien = prop.get('type_bien') if isinstance(prop, dict) else (prop[4] if len(prop) > 4 else None)
+    type_bien = type_bien or "Maison"
+
+    importees = get_uploaded_images(identifiant)
+    if importees and index < len(importees):
+        chemin = importees[index]
+        try:
+            uri = _data_uri(chemin, os.path.getmtime(chemin))
+        except OSError:
+            uri = None
+        if uri:
+            return uri
+
     pool = TYPE_IMAGES.get(type_bien, DEFAULT_IMAGES)
-    photo_id, _ = pool[(prop[0] + index) % len(pool)]
-    return _img_url(photo_id, seed=prop[0])
+    photo_id, _ = pool[(identifiant + index) % len(pool)]
+    return _img_url(photo_id)
 
 
-def fmt_fcfa(value):
-    """680000.0 -> '680 000 FCFA'"""
+def fmt_prix(value):
+    """680000.0 -> '680 000 EUR'."""
     if value is None:
-        return "—"
+        return "-"
     try:
         n = abs(float(value))
         if n == 0:
-            return "0 FCFA"
+            return "0 EUR"
         s = f"{n:,.0f}".replace(",", " ")
-        return f"{s} FCFA"
+        return f"{s} EUR"
     except (TypeError, ValueError):
-        return "—"
+        return "-"
+
+
+# Ancien nom conserve pour les appels existants.
+fmt_fcfa = fmt_prix
 
 
 def prix_affichage(prop):
-    """Prix formaté en fonction du type de transaction (vente / location)."""
-    valeur = fmt_fcfa(prop[9])
-    if len(prop) > 6 and prop[6] == "location":
+    """Prix formate selon le type de transaction (vente ou location)."""
+    valeur = fmt_prix(prop['prix'] if isinstance(prop, dict) else prop[9])
+    transaction = prop.get('transaction_type') if isinstance(prop, dict) else prop[6]
+    if transaction == "location":
         return f"{valeur}<span class='prop-chip-mini'>/mois</span>"
     return valeur

@@ -1,4 +1,4 @@
--- Création des tables
+-- Creation des tables
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -67,21 +67,33 @@ CREATE TABLE client_assignments (
     is_active BOOLEAN DEFAULT TRUE
 );
 
+-- Table des tentatives de connexion : sert a limiter le nombre d'essais
+-- infructueux sur une meme identifiant depuis une meme adresse IP.
+CREATE TABLE login_attempts (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(191) NOT NULL,
+    ip_address VARCHAR(45) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Index pour performance
 CREATE INDEX idx_properties_type ON properties(type_bien);
 CREATE INDEX idx_properties_transaction ON properties(transaction_type);
 CREATE INDEX idx_properties_price ON properties(prix);
 CREATE INDEX idx_appointments_date ON appointments(date_rdv);
 CREATE INDEX idx_favorites_client ON favorites(client_id);
+CREATE INDEX idx_login_attempts ON login_attempts(username, ip_address, created_at);
 
--- Le hash pour 'password' est : $2b$12$Ea.mJ5iWJt3L8E0R5uR41u3lY8Fq.r5.i.hGz2Q/qP6uS4/T4p7Kq
--- NOTE: Ce hash a été généré avec la fonction auth_manager.hash_password('password')
+-- Comptes de demonstration.
+-- Mot de passe commun : ImmoPro2026!
+-- Ces comptes sont des exemples : changez-les avant toute mise en ligne.
+-- Hash bcrypt ($2b$12$) genere avec auth_manager.hash_password('ImmoPro2026!')
 
 INSERT INTO users (username, email, password_hash, role, nom, prenom, is_active) VALUES
-('admin', 'admin@immo.com', '$2b$12$Ea.mJ5iWJt3L8E0R5uR41u3lY8Fq.r5.i.hGz2Q/qP6uS4/T4p7Kq', 'manager', 'Admin', 'Istrateur', TRUE),
-('agent1', 'agent1@immo.com', '$2b$12$Ea.mJ5iWJt3L8E0R5uR41u3lY8Fq.r5.i.hGz2Q/qP6uS4/T4p7Kq', 'agent', 'Dupont', 'Jean', TRUE),
-('bailleur1', 'bailleur1@immo.com', '$2b$12$Ea.mJ5iWJt3L8E0R5uR41u3lY8Fq.r5.i.hGz2Q/qP6uS4/T4p7Kq', 'bailleur', 'Martin', 'Sophie', TRUE),
-('client1', 'client1@immo.com', '$2b$12$Ea.mJ5iWJt3L8E0R5uR41u3lY8Fq.r5.i.hGz2Q/qP6uS4/T4p7Kq', 'client', 'Durand', 'Paul', TRUE);
+('admin', 'admin@immo.com', '$2b$12$hMQLrW2kjbrv2koQkxOzlu4NR5vLU1iHEmPz.INzwh7WGTT/9khfa', 'manager', 'Admin', 'Istrateur', TRUE),
+('agent1', 'agent1@immo.com', '$2b$12$hMQLrW2kjbrv2koQkxOzlu4NR5vLU1iHEmPz.INzwh7WGTT/9khfa', 'agent', 'Dupont', 'Jean', TRUE),
+('bailleur1', 'bailleur1@immo.com', '$2b$12$hMQLrW2kjbrv2koQkxOzlu4NR5vLU1iHEmPz.INzwh7WGTT/9khfa', 'bailleur', 'Martin', 'Sophie', TRUE),
+('client1', 'client1@immo.com', '$2b$12$hMQLrW2kjbrv2koQkxOzlu4NR5vLU1iHEmPz.INzwh7WGTT/9khfa', 'client', 'Durand', 'Paul', TRUE);
 
 -- Script pour ajouter 5 propriétés de test.
 -- Assurez-vous que les utilisateurs avec id=2 (agent) et id=3 (bailleur) existent.
@@ -152,3 +164,15 @@ INSERT INTO properties (bailleur_id, agent_id, titre, type_bien, usage_possible,
     'Studio fonctionnel et entièrement meublé, idéal pour un étudiant. Kitchenette équipée, pièce de vie lumineuse, salle d''eau. À 5 minutes à pied du campus universitaire et du métro.',
     FALSE
 );
+
+-- Affectation des clients aux agents
+INSERT INTO client_assignments (client_id, agent_id, assigned_by) VALUES
+(4, 2, 1);
+
+-- Rendez-vous de demonstration. Les dates sont relatives au jour de
+-- l'import, le jeu reste donc parlant avec le temps.
+INSERT INTO appointments (client_id, property_id, agent_id, date_rdv, type_rdv, notes, status) VALUES
+(4, 1, 2, CURRENT_DATE + INTERVAL '2 days',  'visite',      'Visite le matin, de preference.',        'pending'),
+(4, 2, 2, CURRENT_DATE + INTERVAL '5 days',  'transaction', 'Rencontre pour les papiers du bail.',    'confirmed'),
+(4, 4, 2, CURRENT_DATE - INTERVAL '7 days',  'visite',      'Visite realisee, le client se decide.',  'completed'),
+(4, 3, 2, CURRENT_DATE - INTERVAL '3 days',  'visite',      'Visite annulee par le client.',          'cancelled');

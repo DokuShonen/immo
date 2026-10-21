@@ -1,10 +1,11 @@
-# --- START OF FILE app.py (REDESIGN v2) ---
+# --- ImmoPro - application de gestion immobiliere ---
 
 import streamlit as st
 import sys
 import os
 from datetime import datetime
 from datetime import time as dt_time
+from html import escape
 import time
 import pandas as pd
 import plotly.express as px
@@ -12,8 +13,8 @@ import plotly.express as px
 sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
 
 from utils.auth import auth_manager
-from utils.database import db_manager
-from utils.media import fmt_fcfa, prix_affichage, property_image_uri, get_uploaded_images, save_image_set
+from utils.database import DatabaseError, db_manager, log_exception
+from utils.media import fmt_prix, prix_affichage, property_image_uri, get_uploaded_images, save_image_set
 from styles import inject_styles
 from layout_utils import (
     show_public_hero, show_perks, show_section_title, show_result_bar, show_sidebar_brand,
@@ -21,13 +22,16 @@ from layout_utils import (
 )
 
 # ----------------------------------------------------------------
-# Palette Plotly cohérente avec le design system "Soleil"
+# Palette Plotly coherente avec le design system "Soleil"
 # ----------------------------------------------------------------
 PLOTLY_COLORS = ["#E9643B", "#0F7A68", "#F5A623", "#E0403B", "#12A07E", "#C46A9B", "#8A7566"]
 PX_BASE = dict(
     template="plotly_white",
     color_discrete_sequence=PLOTLY_COLORS,
 )
+
+# Nombre de biens affiches par page.
+BIENS_PAR_PAGE = 9
 
 
 def _fig_layout(fig):
@@ -45,21 +49,38 @@ def _fig_layout(fig):
     return fig
 
 
-TRANSACTION_LABELS = {"vente": "À vendre", "location": "À louer"}
+TRANSACTION_LABELS = {"vente": "A vendre", "location": "A louer"}
 
 ALERT_ICONS = {"success": ":material/task_alt:", "info": ":material/info:", "warning": ":material/warning:", "error": ":material/error:"}
 
 
 def notify(level, message):
-    """Message d'alerte affiché sous forme de popup (toast)."""
+    """Message d'alerte affiche sous forme de popup (toast)."""
     st.toast(message, icon=ALERT_ICONS.get(level, ":material/info:"))
+
+
+def e(valeur):
+    """Echappe une valeur destinee a etre injectee en HTML.
+
+    Sans cet appel, un titre de bien contenant du code HTML serait
+    interprete par le navigateur.
+    """
+    if valeur is None:
+        return ""
+    return escape(str(valeur), quote=True)
+
+
+def erreur_attendue(exc, message="L operation n a pas pu aboutir. Reessayez dans un instant."):
+    """Trace l'erreur cote serveur et affiche un message generique."""
+    log_exception("application", exc)
+    st.error(message)
 
 
 # --- Fonctions d'affichage des vues (Pages) ---
 
 def main():
     st.set_page_config(
-        page_title="ImmoPro – Gestion Immobilière",
+        page_title="ImmoPro - Gestion Immobiliere",
         page_icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo.png"),
         layout="wide",
         initial_sidebar_state="expanded",
@@ -86,7 +107,11 @@ def main():
 # ================================================================
 
 def show_public_access():
-    stats = db_manager.get_statistics()
+    try:
+        stats = db_manager.get_statistics()
+    except DatabaseError:
+        stats = {}
+
     show_public_hero(
         stat_biens=stats.get('total_properties', 0),
         stat_villes=stats.get('total_cities', 0),
@@ -99,7 +124,7 @@ def show_public_access():
         if st.button("Connexion", width='stretch', type="primary"):
             login_dialog()
     with c2:
-        if st.button("Je crée mon compte", width='stretch', type="primary"):
+        if st.button("Je cree mon compte", width='stretch', type="primary"):
             register_dialog()
 
     show_listings(filters_key_prefix="pub", role=None, public_view=True)
@@ -112,7 +137,7 @@ def login_dialog():
         <div style="text-align:center; margin-bottom:1.2rem;">
             <svg width="44" height="44" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#E9643B"/><path d="M14 34 L32 18 L50 34" fill="none" stroke="#FBF1E4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 31 V46 H44 V31" fill="none" stroke="#FBF1E4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="46" cy="15" r="4.5" fill="#FBF1E4"/></svg>
             <h2 style="margin:.3rem 0 .2rem; font-family:'Fredoka','Nunito',sans-serif;">Bon retour</h2>
-            <p style="color:#8a7a6a; margin:0; font-size:.9rem;">Connectez-vous pour accéder à votre espace.</p>
+            <p style="color:#8a7a6a; margin:0; font-size:.9rem;">Connectez-vous pour acceder a votre espace.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -122,26 +147,28 @@ def login_dialog():
         password = st.text_input("Mot de passe", type="password", placeholder="Votre mot de passe")
         submitted = st.form_submit_button("Me connecter", width='stretch', type="primary")
         if submitted:
-            if username and password:
+            if not (username and password):
+                notify("warning", "Veuillez remplir tous les champs.")
+            else:
                 user = auth_manager.login(username, password)
                 if user:
                     st.session_state.user = user
-                    st.toast("Connexion réussie !", icon=":material/celebration:")
+                    st.toast("Connexion reussie !", icon=":material/celebration:")
                     time.sleep(0.6)
                     st.rerun()
+                elif auth_manager.est_bloque(username, auth_manager.client_ip()):
+                    notify("error", "Trop de tentatives. Reessayez dans quinze minutes.")
                 else:
                     notify("error", "Nom d'utilisateur ou mot de passe incorrect.")
-            else:
-                notify("warning", "Veuillez remplir tous les champs.")
 
 
-@st.dialog("Créer un compte", width="medium", icon=":material/star:")
+@st.dialog("Creer un compte", width="medium", icon=":material/star:")
 def register_dialog():
     st.markdown(
         """
         <div style="text-align:center; margin-bottom:1.2rem;">
             <svg width="44" height="44" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#E9643B"/><path d="M14 34 L32 18 L50 34" fill="none" stroke="#FBF1E4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 31 V46 H44 V31" fill="none" stroke="#FBF1E4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="46" cy="15" r="4.5" fill="#FBF1E4"/></svg>
-            <h2 style="margin:.3rem 0 .2rem; font-family:'Fredoka','Nunito',sans-serif;">Créez votre compte</h2>
+            <h2 style="margin:.3rem 0 .2rem; font-family:'Fredoka','Nunito',sans-serif;">Creez votre compte</h2>
             <p style="color:#8a7a6a; margin:0; font-size:.9rem;">Rejoignez ImmoPro en moins d'une minute.</p>
         </div>
         """,
@@ -149,16 +176,16 @@ def register_dialog():
     )
     with st.form("public_register_form"):
         role = st.selectbox("Type de compte", ["client", "bailleur"],
-                            help="Client : recherchez et réservez des biens. Bailleur : mettez vos biens en ligne.")
+                            help="Client : recherchez des biens. Bailleur : mettez vos biens en ligne.")
         c1, c2 = st.columns(2)
         with c1:
             username = st.text_input("Nom d'utilisateur*", placeholder="ex. martin12")
             nom = st.text_input("Nom*")
             email = st.text_input("Email*", placeholder="vous@exemple.com")
-            telephone = st.text_input("Téléphone", placeholder="+33 6 12 34 56 78")
+            telephone = st.text_input("Telephone", placeholder="+33 6 12 34 56 78")
         with c2:
-            password = st.text_input("Mot de passe*", type="password", help="Au moins 6 caractères.")
-            prenom = st.text_input("Prénom")
+            password = st.text_input("Mot de passe*", type="password", help="Au moins 8 caracteres.")
+            prenom = st.text_input("Prenom")
             if role == "bailleur":
                 raison_sociale = st.text_input("Raison sociale")
             else:
@@ -170,12 +197,13 @@ def register_dialog():
         if submitted:
             if not (username and password and nom and email):
                 notify("error", "Veuillez remplir tous les champs obligatoires (*).")
-            elif len(password) < 6:
-                notify("error", "Le mot de passe doit contenir au moins 6 caractères.")
-            elif "@" not in email or "." not in email:
+            elif len(password) < 8:
+                notify("error", "Le mot de passe doit contenir au moins 8 caracteres.")
+            elif "@" not in email or "." not in email.split("@")[-1]:
                 notify("error", "Veuillez saisir une adresse email valide.")
             else:
-                result = auth_manager.register(username, email, password, role, nom, prenom, raison_sociale, telephone, adresse)
+                result = auth_manager.register(username, email, password, role, nom,
+                                               prenom, raison_sociale, telephone, adresse)
                 if result['success']:
                     st.toast(result['message'], icon=":material/celebration:")
                     time.sleep(0.8)
@@ -185,7 +213,7 @@ def register_dialog():
 
 
 def _liste_filtres(prefix):
-    """Barre de filtres commune (publique et connectée)."""
+    """Barre de filtres commune (publique et connectee)."""
     c1, c2, c3, c4, c5 = st.columns([1.4, 1.2, 1, 1, 1])
     with c1:
         q = st.text_input("Recherche", placeholder="Lieu, bien...", key=f"{prefix}_q")
@@ -198,58 +226,90 @@ def _liste_filtres(prefix):
                                           key=f"{prefix}_trans")
     pmin, pmax = db_manager.get_price_bounds()
     with c4:
-        prix_min = st.number_input("Prix min (FCFA)", min_value=0, value=pmin, step=50000, key=f"{prefix}_pmin")
+        prix_min = st.number_input("Prix min (EUR)", min_value=0, value=pmin, step=50000, key=f"{prefix}_pmin")
     with c5:
-        prix_max = st.number_input("Prix max (FCFA)", min_value=0, value=pmax, step=50000, key=f"{prefix}_pmax")
+        prix_max = st.number_input("Prix max (EUR)", min_value=0, value=pmax, step=50000, key=f"{prefix}_pmax")
 
     if prix_min > prix_max:
         prix_min, prix_max = prix_max, prix_min
 
-    filters = {'prix_min': prix_min, 'prix_max': prix_max}
-    if type_filter != "Tous":
-        filters['type_bien'] = type_filter
-    if transaction_filter != "Tous":
-        filters['transaction_type'] = transaction_filter
-    if q and q.strip():
-        filters['q'] = q
-    return filters
+    return {
+        'q': q,
+        'type_bien': None if type_filter == "Tous" else type_filter,
+        'transaction_type': None if transaction_filter == "Tous" else transaction_filter,
+        'prix_min': prix_min,
+        'prix_max': prix_max,
+    }
 
 
 def show_listings(filters_key_prefix, role=None, public_view=False):
-    show_section_title("fa-search", "Propriétés disponibles")
+    show_section_title("fa-search", "Proprietes disponibles")
 
-    filters = _liste_filtres(filters_key_prefix)
+    try:
+        filters = _liste_filtres(filters_key_prefix)
+    except DatabaseError as exc:
+        erreur_attendue(exc)
+        return
 
     sort_map = {
-        "Plus récents": "recent",
+        "Plus recents": "recent",
         "Prix croissant": "prix_asc",
-        "Prix décroissant": "prix_desc",
+        "Prix decroissant": "prix_desc",
         "Plus grandes surfaces": "taille_desc",
     }
     c_sort = st.selectbox("Trier par", list(sort_map.keys()), key=f"{filters_key_prefix}_sort")
 
+    page_key = f"{filters_key_prefix}_page"
+    if page_key not in st.session_state:
+        st.session_state[page_key] = 0
+
     try:
-        properties = db_manager.get_properties(filters, sort=sort_map[c_sort])
-        if properties:
-            show_result_bar(len(properties))
-            cols = st.columns(3, gap="medium")
-            for idx, prop in enumerate(properties):
-                with cols[idx % 3]:
-                    display_property_card(prop, user_role=role, public_view=public_view)
-        else:
-            st.info("Aucun bien ne correspond à ces critères. Modifiez vos filtres pour élargir la recherche.")
-            if filters.get('q'):
-                st.caption(f"Recherche : « {filters['q']} »")
-    except Exception as e:
-        st.error(f"Erreur : {str(e)}")
+        total = db_manager.get_properties(filters, count_only=True)
+        nb_pages = max(1, (total + BIENS_PAR_PAGE - 1) // BIENS_PAR_PAGE)
+        if st.session_state[page_key] >= nb_pages:
+            st.session_state[page_key] = nb_pages - 1
+
+        properties = db_manager.get_properties(
+            filters,
+            sort=sort_map[c_sort],
+            limit=BIENS_PAR_PAGE,
+            offset=st.session_state[page_key] * BIENS_PAR_PAGE,
+        )
+    except DatabaseError as exc:
+        erreur_attendue(exc)
+        return
+
+    if properties:
+        show_result_bar(total)
+        cols = st.columns(3, gap="medium")
+        for idx, prop in enumerate(properties):
+            with cols[idx % 3]:
+                display_property_card(prop, user_role=role, public_view=public_view)
+
+        if nb_pages > 1:
+            c_prec, c_info, c_suiv = st.columns([1, 2, 1])
+            with c_prec:
+                if st.button("Precedent", width='stretch', disabled=st.session_state[page_key] == 0):
+                    st.session_state[page_key] = max(0, st.session_state[page_key] - 1)
+                    st.rerun()
+            with c_info:
+                st.caption(f"Page {st.session_state[page_key] + 1} sur {nb_pages} - {total} biens")
+            with c_suiv:
+                if st.button("Suivant", width='stretch', disabled=st.session_state[page_key] >= nb_pages - 1):
+                    st.session_state[page_key] = min(nb_pages - 1, st.session_state[page_key] + 1)
+                    st.rerun()
+    else:
+        st.info("Aucun bien ne correspond a ces criteres. Modifiez vos filtres pour elargir la recherche.")
+        if filters.get('q'):
+            st.caption(f"Recherche : « {filters['q']} »")
 
 
 # ================================================================
-# CARTE PROPRIÉTÉ
+# CARTE PROPRIETE
 # ================================================================
 
 def display_property_card(prop, user_role=None, public_view=False):
-    pid = prop[0]
+    pid = prop['id']
     dk = f"details_visible_{pid}"
     ak = f"appointment_form_visible_{pid}"
     if dk not in st.session_state:
@@ -257,31 +317,32 @@ def display_property_card(prop, user_role=None, public_view=False):
     if ak not in st.session_state:
         st.session_state[ak] = False
 
-    is_featured = bool(prop[11])
-    transaction = prop[6]
+    is_featured = bool(prop.get('is_featured'))
+    transaction = prop.get('transaction_type')
     trans_label = TRANSACTION_LABELS.get(transaction, transaction)
     price_html = prix_affichage(prop)
-    m2 = f"{prop[8]:,.0f} m²" if prop[8] else "Surface n.c."
+    taille = prop.get('taille')
+    m2 = f"{taille:,.0f} m2" if taille else "Surface n.c."
 
     tags = ""
     if is_featured:
         tags += '<span class="prop-tag featured"><i class="fas fa-star"></i> Mise en avant</span>'
     trans_cls = "vente" if transaction == "vente" else "location"
-    tags += f'<span class="prop-tag {trans_cls}">{trans_label}</span>'
+    tags += f'<span class="prop-tag {trans_cls}">{e(trans_label)}</span>'
 
     st.markdown(f"""
     <div class="prop-card">
         <div class="prop-media">
-            <img src="{property_image_uri(prop)}" alt="{prop[3]}" loading="lazy">
+            <img src="{e(property_image_uri(prop))}" alt="{e(prop.get('titre'))}" loading="lazy">
             <div class="prop-tags">{tags}</div>
             <div class="prop-price-badge">{price_html}</div>
         </div>
         <div class="prop-body">
-            <div class="prop-title">{prop[3]}</div>
-            <div class="prop-loc"><i class="fas fa-map-marker-alt"></i> {prop[7]}</div>
+            <div class="prop-title">{e(prop.get('titre'))}</div>
+            <div class="prop-loc"><i class="fas fa-map-marker-alt"></i> {e(prop.get('situation_geo'))}</div>
             <div class="prop-meta">
-                <span class="prop-chip"><i class="fas fa-ruler-combined"></i> {m2}</span>
-                <span class="prop-chip"><i class="fas fa-th-large"></i> {prop[4]}</span>
+                <span class="prop-chip"><i class="fas fa-ruler-combined"></i> {e(m2)}</span>
+                <span class="prop-chip"><i class="fas fa-th-large"></i> {e(prop.get('type_bien'))}</span>
             </div>
         </div>
     </div>
@@ -289,7 +350,7 @@ def display_property_card(prop, user_role=None, public_view=False):
 
     st.markdown('<div class="prop-actions">', unsafe_allow_html=True)
     if not st.session_state[dk]:
-        if st.button("Découvrir ce bien", key=f"view_{pid}", width='stretch'):
+        if st.button("Decouvrir ce bien", key=f"view_{pid}", width='stretch'):
             st.session_state[dk] = True
             st.rerun()
     else:
@@ -298,16 +359,17 @@ def display_property_card(prop, user_role=None, public_view=False):
 
 
 def _show_property_details(prop, pid, dk, ak, user_role, public_view):
-    is_featured = bool(prop[11])
-    transaction = prop[6]
+    is_featured = bool(prop.get('is_featured'))
+    transaction = prop.get('transaction_type')
     trans_label = TRANSACTION_LABELS.get(transaction, transaction)
-    m2 = f"{prop[8]:,.0f} m²" if prop[8] else "n.c."
+    taille = prop.get('taille')
+    m2 = f"{taille:,.0f} m2" if taille else "n.c."
 
     with st.container(border=True):
         st.markdown(f"""
         <div style="margin:-4px 0 8px;">
             <div style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:6px;">Description</div>
-            <div style="color:var(--ink);font-size:0.95rem;line-height:1.55;">{prop[10]}</div>
+            <div style="color:var(--ink);font-size:0.95rem;line-height:1.55;">{e(prop.get('description'))}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -321,21 +383,25 @@ def _show_property_details(prop, pid, dk, ak, user_role, public_view):
 
         details_cols = st.columns(2)
         with details_cols[0]:
-            st.markdown(f"**Type :** {prop[4]}")
-            st.markdown(f"**Usage :** {prop[5]}")
-            st.markdown(f"**Taille :** {m2}")
+            st.markdown(f"**Type :** {e(prop.get('type_bien'))}")
+            st.markdown(f"**Usage :** {e(prop.get('usage_possible'))}")
+            st.markdown(f"**Taille :** {e(m2)}")
         with details_cols[1]:
-            st.markdown(f"**Transaction :** {trans_label}")
-            st.markdown(f"**Prix :** {fmt_fcfa(prop[9])}")
-            if len(prop) > 15 and prop[14]:
-                st.markdown(f"**Bailleur :** {prop[14]}" + (f" — {prop[15]}" if prop[15] else ""))
-            if len(prop) > 17 and prop[16]:
-                st.markdown(f"**Agent :** {prop[16]} {prop[17] or ''}".strip())
+            st.markdown(f"**Transaction :** {e(trans_label)}")
+            st.markdown(f"**Prix :** {fmt_prix(prop.get('prix'))}")
+            if prop.get('bailleur_nom'):
+                bailleur = e(prop.get('bailleur_nom'))
+                raison = e(prop.get('bailleur_raison_sociale'))
+                st.markdown(f"**Bailleur :** {bailleur}" + (f" - {raison}" if raison else ""))
+            if prop.get('agent_nom'):
+                agent = e(prop.get('agent_nom'))
+                prenom = e(prop.get('agent_prenom'))
+                st.markdown(f"**Agent :** {agent} {prenom}".strip())
 
         if not public_view and user_role == 'client':
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("Réserver une visite", key=f"appt_{pid}", width='stretch', type="primary"):
+                if st.button("Reserver une visite", key=f"appt_{pid}", width='stretch', type="primary"):
                     st.session_state[ak] = True
             with c2:
                 is_fav = db_manager.is_favorite(st.session_state.user['id'], pid)
@@ -343,10 +409,10 @@ def _show_property_details(prop, pid, dk, ak, user_role, public_view):
                 if st.button(label, key=f"fav_{pid}", width='stretch'):
                     if is_fav:
                         db_manager.remove_from_favorites(st.session_state.user['id'], pid)
-                        st.toast("Retiré des favoris")
+                        st.toast("Retire des favoris")
                     else:
                         db_manager.add_to_favorites(st.session_state.user['id'], pid)
-                        st.toast("Ajouté à vos favoris !")
+                        st.toast("Ajoute a vos favoris !")
 
     if st.button("Replier", key=f"hide_{pid}", width='stretch', type="secondary"):
         st.session_state[dk] = False
@@ -358,17 +424,17 @@ def _show_property_details(prop, pid, dk, ak, user_role, public_view):
 
 
 # ================================================================
-# APPLICATION CONNECTÉE
+# APPLICATION CONNECTEE
 # ================================================================
 
 def show_main_app():
     user = st.session_state.user
 
     menus = {
-        'client': {"Voir les propriétés": "properties", "Mes favoris": "favorites", "Mes rendez-vous": "appointments"},
-        'bailleur': {"Voir les propriétés": "properties", "Ajouter une propriété": "add_property", "Mes propriétés": "my_properties"},
-        'agent': {"Voir les propriétés": "properties", "Ajouter une propriété": "add_property", "Mes clients": "my_clients", "Rendez-vous": "appointments"},
-        'manager': {"Voir les propriétés": "properties", "Ajouter une propriété": "add_property", "Gestion des utilisateurs": "manage_users", "Statistiques": "statistics"},
+        'client': {"Voir les proprietes": "properties", "Mes favoris": "favorites", "Mes rendez-vous": "appointments"},
+        'bailleur': {"Voir les proprietes": "properties", "Ajouter une propriete": "add_property", "Mes proprietes": "my_properties"},
+        'agent': {"Voir les proprietes": "properties", "Ajouter une propriete": "add_property", "Mes clients": "my_clients", "Rendez-vous": "appointments"},
+        'manager': {"Voir les proprietes": "properties", "Ajouter une propriete": "add_property", "Gestion des utilisateurs": "manage_users", "Statistiques": "statistics"},
     }
 
     MENU_ICONS = {
@@ -396,7 +462,7 @@ def show_main_app():
         show_sidebar_brand()
         st.divider()
         show_sidebar_user(user)
-        st.caption(f"{user['email']} · {user['telephone'] or 'tél. non renseigné'}")
+        st.caption(f"{user['email']} · {user['telephone'] or 'tel. non renseigne'}")
         st.divider()
 
         st.markdown('<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;color:rgba(255,255,255,0.55);font-weight:700;margin-bottom:6px;">Navigation</div>', unsafe_allow_html=True)
@@ -405,7 +471,7 @@ def show_main_app():
         st.session_state.page = current_menu[selection]
 
         st.divider()
-        if st.button("Se déconnecter", width='stretch'):
+        if st.button("Se deconnecter", width='stretch'):
             auth_manager.logout()
             st.rerun()
 
@@ -414,7 +480,7 @@ def show_main_app():
 
     page_icon = MENU_ICONS.get(page, "fa-home")
     page_label = next((k for k, v in current_menu.items() if v == page), page)
-    st.markdown(f'<div class="section-title"><span class="bar"></span><h2><i class="fas {page_icon}" style="color:var(--coral-strong);margin-right:8px;"></i>{page_label}</h2></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-title"><span class="bar"></span><h2><i class="fas {page_icon}" style="color:var(--coral-strong);margin-right:8px;"></i>{e(page_label)}</h2></div>', unsafe_allow_html=True)
 
     if page == "properties":
         show_listings(filters_key_prefix="priv", role=role, public_view=False)
@@ -447,7 +513,7 @@ def show_appointment_form(property_id, show_title=True):
     type_rdv = st.selectbox("Type de rendez-vous", ["visite", "transaction"],
                             format_func=lambda x: "Visite du bien" if x == "visite" else "Transaction",
                             key=f"appt_type_{property_id}")
-    notes = st.text_area("Notes (optionnel)", placeholder="Précisez vos disponibilités ou vos questions...",
+    notes = st.text_area("Notes (optionnel)", placeholder="Precisez vos disponibilites ou vos questions...",
                          key=f"appt_notes_{property_id}")
 
     c1, c2 = st.columns(2)
@@ -455,19 +521,29 @@ def show_appointment_form(property_id, show_title=True):
         if st.button("Confirmer", width='stretch', type="primary", key=f"appt_confirm_{property_id}"):
             try:
                 property_data = db_manager.get_property_by_id(property_id)
-                if property_data and property_data[2]:
-                    db_manager.create_appointment(
-                        st.session_state.user['id'], property_id, property_data[2],
-                        datetime.combine(date_rdv, time_rdv), type_rdv, notes
-                    )
-                    st.toast("Rendez-vous créé !", icon=":material/celebration:")
-                    st.session_state[f"appointment_form_visible_{property_id}"] = False
-                    time.sleep(0.6)
-                    st.rerun()
+                if not property_data:
+                    notify("error", "Ce bien n'est plus disponible.")
+                elif not property_data.get('is_available'):
+                    notify("error", "Ce bien n'est plus disponible a la reservation.")
+                elif not property_data.get('agent_id'):
+                    notify("error", "Impossible de creer le rendez-vous (agent non assigne).")
                 else:
-                    notify("error", "Impossible de créer le rendez-vous (agent non assigné).")
-            except Exception as e:
-                st.error(f"Erreur : {str(e)}")
+                    agent_id = property_data['agent_id']
+                    moment = datetime.combine(date_rdv, time_rdv)
+                    conflits = db_manager.get_conflicting_appointments(agent_id, moment)
+                    if conflits:
+                        notify("error", "L'agent a deja un rendez-vous a ce creneau. Choisissez une autre horaire.")
+                    else:
+                        db_manager.create_appointment(
+                            st.session_state.user['id'], property_id, agent_id,
+                            moment, type_rdv, notes
+                        )
+                        st.toast("Rendez-vous cree !", icon=":material/celebration:")
+                        st.session_state[f"appointment_form_visible_{property_id}"] = False
+                        time.sleep(0.6)
+                        st.rerun()
+            except DatabaseError as exc:
+                erreur_attendue(exc)
     with c2:
         if st.button("Annuler", width='stretch', key=f"appt_cancel_{property_id}"):
             st.session_state[f"appointment_form_visible_{property_id}"] = False
@@ -476,14 +552,16 @@ def show_appointment_form(property_id, show_title=True):
 
 STATUS_BADGES = {
     "pending": '<span class="status-badge status-pending"><i class="fas fa-circle"></i> En attente</span>',
-    "confirmed": '<span class="status-badge status-confirmed"><i class="fas fa-check-circle"></i> Confirmé</span>',
-    "completed": '<span class="status-badge status-completed"><i class="fas fa-check-double"></i> Terminé</span>',
-    "cancelled": '<span class="status-badge status-cancelled"><i class="fas fa-times-circle"></i> Annulé</span>',
+    "confirmed": '<span class="status-badge status-confirmed"><i class="fas fa-check-circle"></i> Confirme</span>',
+    "completed": '<span class="status-badge status-completed"><i class="fas fa-check-double"></i> Termine</span>',
+    "cancelled": '<span class="status-badge status-cancelled"><i class="fas fa-times-circle"></i> Annule</span>',
 }
 
 
 def status_badge(status):
-    return STATUS_BADGES.get(status, f"<span class='status-badge'>{status}</span>")
+    if status in STATUS_BADGES:
+        return STATUS_BADGES[status]
+    return f"<span class='status-badge'>{e(status)}</span>"
 
 
 def show_appointments():
@@ -498,55 +576,57 @@ def show_client_appointments_view():
     try:
         appointments = db_manager.get_appointments(st.session_state.user['id'], 'client')
         if not appointments:
-            st.info("Aucun rendez-vous planifié.")
-            st.caption("Parcourez les propriétés et cliquez sur « Prendre rendez-vous » pour en créer un.")
+            st.info("Aucun rendez-vous planifie.")
+            st.caption("Parcourez les proprietes et cliquez sur « Prendre rendez-vous » pour en creer un.")
             return
         for apt in appointments:
             with st.container(border=True):
                 c1, c2 = st.columns([3, 1])
                 with c1:
-                    st.markdown(f"**{apt[10]}**")
-                    st.markdown(f"<span style='color:var(--muted);font-size:0.88rem;'>Agent : <b>{apt[11]} {apt[12] or ''}</b></span>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='font-size:0.9rem;margin-top:6px;'><i class='fas fa-calendar-day' style='color:var(--amber);'></i> {apt[4].strftime('%d/%m/%Y à %H:%M')} &nbsp;·&nbsp; {apt[5].title()}</div>", unsafe_allow_html=True)
+                    st.markdown(f"**{e(apt.get('property_titre'))}**")
+                    st.markdown(f"<span style='color:var(--muted);font-size:0.88rem;'>Agent : <b>{e(apt.get('agent_nom'))} {e(apt.get('agent_prenom'))}</b></span>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:0.9rem;margin-top:6px;'><i class='fas fa-calendar-day' style='color:var(--amber);'></i> {apt['date_rdv'].strftime('%d/%m/%Y a %H:%M')} &nbsp;·&nbsp; {e((apt.get('type_rdv') or '').title())}</div>", unsafe_allow_html=True)
                 with c2:
-                    st.markdown(status_badge(apt[7]), unsafe_allow_html=True)
-                if apt[7] == 'pending':
-                    if st.button("Annuler ce rendez-vous", key=f"cancel_{apt[0]}", width='stretch'):
-                        update_appointment_status(apt[0], 'cancelled')
-                        notify("success", "Rendez-vous annulé")
+                    st.markdown(status_badge(apt.get('status')), unsafe_allow_html=True)
+                if apt.get('status') == 'pending':
+                    if st.button("Annuler ce rendez-vous", key=f"cancel_{apt['id']}", width='stretch'):
+                        db_manager.update_appointment_status(apt['id'], 'cancelled')
+                        notify("success", "Rendez-vous annule")
                         st.rerun()
-    except Exception as e:
-        st.error(f"Erreur : {str(e)}")
+    except DatabaseError as exc:
+        erreur_attendue(exc)
 
 
 def show_agent_appointments_view():
+    role = st.session_state.user['role']
     try:
-        appointments = db_manager.get_appointments(st.session_state.user['id'], 'agent')
+        # Un manager suit tous les rendez-vous de la plateforme.
+        appointments = db_manager.get_appointments(st.session_state.user['id'], role)
         if not appointments:
-            st.info("Aucun rendez-vous pour cet agent.")
-            st.caption("Les demandes de rendez-vous de vos clients apparaîtront ici.")
+            st.info("Aucun rendez-vous a traiter.")
+            st.caption("Les demandes de rendez-vous de vos clients apparaitront ici.")
             return
         for apt in appointments:
             with st.container(border=True):
                 c1, c2 = st.columns([3, 1])
                 with c1:
-                    st.markdown(f"**Client : {apt[10]} {apt[11] or ''}**")
-                    st.markdown(f"<span style='color:var(--muted);font-size:0.88rem;'>Propriété : <b>{apt[9]}</b></span>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='font-size:0.9rem;margin-top:6px;'><i class='fas fa-calendar-day' style='color:var(--amber);'></i> {apt[4].strftime('%d/%m/%Y à %H:%M')} &nbsp;·&nbsp; {apt[5].title()}</div>", unsafe_allow_html=True)
-                    if apt[6]:
-                        st.caption(f"Notes : {apt[6]}")
+                    st.markdown(f"**Client : {e(apt.get('client_nom'))} {e(apt.get('client_prenom'))}**")
+                    st.markdown(f"<span style='color:var(--muted);font-size:0.88rem;'>Propriete : <b>{e(apt.get('property_titre'))}</b></span>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:0.9rem;margin-top:6px;'><i class='fas fa-calendar-day' style='color:var(--amber);'></i> {apt['date_rdv'].strftime('%d/%m/%Y a %H:%M')} &nbsp;·&nbsp; {e((apt.get('type_rdv') or '').title())}</div>", unsafe_allow_html=True)
+                    if apt.get('notes'):
+                        st.caption(f"Notes : {apt['notes']}")
                 with c2:
-                    st.markdown(status_badge(apt[7]), unsafe_allow_html=True)
-                if apt[7] == 'pending':
-                    if st.button("Confirmer", key=f"confirm_{apt[0]}", width='stretch', type="primary"):
-                        update_appointment_status(apt[0], 'confirmed')
+                    st.markdown(status_badge(apt.get('status')), unsafe_allow_html=True)
+                if apt.get('status') == 'pending':
+                    if st.button("Confirmer", key=f"confirm_{apt['id']}", width='stretch', type="primary"):
+                        db_manager.update_appointment_status(apt['id'], 'confirmed')
                         st.rerun()
-                if apt[7] in ['pending', 'confirmed']:
-                    if st.button("Marquer terminé", key=f"complete_{apt[0]}", width='stretch'):
-                        update_appointment_status(apt[0], 'completed')
+                if apt.get('status') in ['pending', 'confirmed']:
+                    if st.button("Marquer termine", key=f"complete_{apt['id']}", width='stretch'):
+                        db_manager.update_appointment_status(apt['id'], 'completed')
                         st.rerun()
-    except Exception as e:
-        st.error(f"Erreur : {str(e)}")
+    except DatabaseError as exc:
+        erreur_attendue(exc)
 
 
 # ================================================================
@@ -557,20 +637,20 @@ def show_favorites():
     try:
         favorites = db_manager.get_user_favorites(st.session_state.user['id'])
         if not favorites:
-            st.info("Vous n'avez aucune propriété favorite pour le moment.")
-            st.caption("Ajoutez des biens à vos favoris depuis la page « Voir les propriétés ».")
+            st.info("Vous n'avez aucune propriete favorite pour le moment.")
+            st.caption("Ajoutez des biens a vos favoris depuis la page « Voir les proprietes ».")
             return
         show_result_bar(len(favorites))
         cols = st.columns(3, gap="medium")
         for idx, prop in enumerate(favorites):
             with cols[idx % 3]:
                 display_property_card(prop, user_role='client', public_view=False)
-    except Exception as e:
-        st.error(f"Erreur : {str(e)}")
+    except DatabaseError as exc:
+        erreur_attendue(exc)
 
 
 # ================================================================
-# GESTION DES PROPRIÉTÉS
+# GESTION DES PROPRIETES
 # ================================================================
 
 def show_add_property():
@@ -586,33 +666,36 @@ def show_add_property():
             situation_geo = st.text_input("Localisation*", placeholder="Quartier, ville")
         with c2:
             taille = st.number_input("Taille (m²)", min_value=0, step=1)
-            prix = st.number_input("Prix (FCFA)*", min_value=0, step=10000)
+            prix = st.number_input("Prix (EUR)*", min_value=0, step=10000)
             is_featured = st.checkbox("Mettre en avant")
             agent_id = user['id']
             if user['role'] == 'manager':
                 agents = db_manager.get_all_users('agent')
                 if agents:
-                    agent_options = {f"{agent[5]} {agent[6] or ''}".strip(): agent[0] for agent in agents}
+                    agent_options = {f"{a['nom']} {a['prenom'] or ''}".strip(): a['id'] for a in agents}
                     selected_agent = st.selectbox("Agent responsable", list(agent_options.keys()))
                     agent_id = agent_options[selected_agent]
         description = st.text_area("Description*", placeholder="Décrivez le bien : surface, pièces, équipements, environnement...")
 
-        uploaded_files = st.file_uploader("Photos du bien", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
+        uploaded_files = st.file_uploader("Photos du bien", type=['png', 'jpg', 'jpeg', 'webp'], accept_multiple_files=True)
 
         submitted = st.form_submit_button("Ajouter la propriété", width='stretch', type="primary")
         if submitted:
             if all([titre, type_bien, usage, transaction_type, situation_geo, prix > 0, description]):
                 bailleur_id = user['id'] if user['role'] == 'bailleur' else None
-                property_id_tuple = db_manager.add_property(
-                    bailleur_id, agent_id, titre, type_bien, usage,
-                    transaction_type, situation_geo, taille, prix, description, is_featured
-                )
-                if property_id_tuple:
-                    if uploaded_files:
-                        save_image_set(property_id_tuple[0], uploaded_files)
-                    notify("success", "Propriété ajoutée !")
-                else:
-                    notify("error", "Erreur lors de l'ajout.")
+                try:
+                    property_id_tuple = db_manager.add_property(
+                        bailleur_id, agent_id, titre, type_bien, usage,
+                        transaction_type, situation_geo, taille, prix, description, is_featured
+                    )
+                    if property_id_tuple:
+                        if uploaded_files:
+                            save_image_set(property_id_tuple['id'], uploaded_files)
+                        notify("success", "Propriété ajoutée !")
+                    else:
+                        notify("error", "Erreur lors de l'ajout.")
+                except DatabaseError as exc:
+                    erreur_attendue(exc)
             else:
                 notify("error", "Veuillez remplir tous les champs obligatoires (*).")
 
@@ -627,8 +710,7 @@ def show_my_properties():
 
     user = st.session_state.user
     try:
-        query = "SELECT p.* FROM properties p WHERE p.bailleur_id = %s ORDER BY p.created_at DESC"
-        properties = db_manager.execute_query(query, (user['id'],), fetch='all')
+        properties = db_manager.get_properties_by_bailleur(user['id'])
         if not properties:
             st.info("Vous n'avez aucune propriété enregistrée.")
             st.caption("Utilisez « Ajouter une propriété » pour mettre en ligne votre premier bien.")
@@ -637,24 +719,24 @@ def show_my_properties():
             with st.container(border=True):
                 c1, c2 = st.columns([2.6, 1.4])
                 with c1:
-                    st.markdown(f"**{prop[3]}**")
-                    st.markdown(f"<span style='color:var(--muted);font-size:0.88rem;'><i class='fas fa-map-marker-alt'></i> {prop[7]} · {fmt_fcfa(prop[9])}</span>", unsafe_allow_html=True)
-                    badge_cls = "status-confirmed" if prop[12] else "status-cancelled"
-                    libelle = "Actif" if prop[12] else "Masqué"
+                    st.markdown(f"**{e(prop.get('titre'))}**")
+                    st.markdown(f"<span style='color:var(--muted);font-size:0.88rem;'><i class='fas fa-map-marker-alt'></i> {e(prop.get('situation_geo'))} · {fmt_prix(prop.get('prix'))}</span>", unsafe_allow_html=True)
+                    badge_cls = "status-confirmed" if prop.get('is_available') else "status-cancelled"
+                    libelle = "Actif" if prop.get('is_available') else "Masqué"
                     st.markdown(f"<span class='status-badge {badge_cls}'>• {libelle}</span>", unsafe_allow_html=True)
                 with c2:
                     b1, b2 = st.columns(2)
                     with b1:
-                        if st.button("Modifier", key=f"edit_{prop[0]}", width='stretch'):
-                            st.session_state.editing_property_id = prop[0]
+                        if st.button("Modifier", key=f"edit_{prop['id']}", width='stretch'):
+                            st.session_state.editing_property_id = prop['id']
                             st.rerun()
                     with b2:
-                        status_text = "Masquer" if prop[12] else "Activer"
-                        if st.button(status_text, key=f"toggle_{prop[0]}", width='stretch', type="secondary"):
-                            toggle_property_status(prop[0], not prop[12])
+                        status_text = "Masquer" if prop.get('is_available') else "Activer"
+                        if st.button(status_text, key=f"toggle_{prop['id']}", width='stretch', type="secondary"):
+                            db_manager.toggle_property_status(prop['id'], not prop.get('is_available'))
                             st.rerun()
-    except Exception as e:
-        st.error(f"Erreur : {str(e)}")
+    except DatabaseError as exc:
+        erreur_attendue(exc)
 
 
 def show_edit_property_form(property_id):
@@ -666,28 +748,28 @@ def show_edit_property_form(property_id):
         st.rerun()
         return
 
-    default_price = float(property_data[9]) if property_data[9] is not None else 0.0
+    default_price = float(property_data['prix']) if property_data['prix'] is not None else 0.0
 
     with st.form(f"edit_property_{property_id}"):
         c1, c2 = st.columns(2)
         with c1:
-            titre = st.text_input("Titre*", value=property_data[3], key=f"edit_titre_{property_id}")
+            titre = st.text_input("Titre*", value=property_data['titre'], key=f"edit_titre_{property_id}")
             type_bien = st.selectbox(
                 "Type*", ["Appartement", "Maison", "Bureau", "Commercial", "Terrain"],
-                index=["Appartement", "Maison", "Bureau", "Commercial", "Terrain"].index(property_data[4]),
+                index=["Appartement", "Maison", "Bureau", "Commercial", "Terrain"].index(property_data['type_bien']),
                 key=f"edit_type_{property_id}")
             transaction = st.selectbox(
                 "Transaction*", ["vente", "location"],
-                index=["vente", "location"].index(property_data[6]),
+                index=["vente", "location"].index(property_data['transaction_type']),
                 format_func=lambda x: "À vendre" if x == "vente" else "À louer",
                 key=f"edit_trans_{property_id}")
         with c2:
-            taille = st.number_input("Taille (m²)", value=property_data[8] or 0, key=f"edit_taille_{property_id}")
-            prix = st.number_input("Prix (FCFA)*", value=default_price, format="%.0f", key=f"edit_prix_{property_id}")
-            is_featured = st.checkbox("Mettre en avant", value=property_data[11], key=f"edit_feat_{property_id}")
-        description = st.text_area("Description*", value=property_data[10], key=f"edit_desc_{property_id}")
+            taille = st.number_input("Taille (m²)", value=property_data['taille'] or 0, key=f"edit_taille_{property_id}")
+            prix = st.number_input("Prix (EUR)*", value=default_price, format="%.0f", key=f"edit_prix_{property_id}")
+            is_featured = st.checkbox("Mettre en avant", value=property_data['is_featured'], key=f"edit_feat_{property_id}")
+        description = st.text_area("Description*", value=property_data['description'], key=f"edit_desc_{property_id}")
 
-        uploaded_files = st.file_uploader("Ajouter/Remplacer des photos", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
+        uploaded_files = st.file_uploader("Ajouter/Remplacer des photos", type=['png', 'jpg', 'jpeg', 'webp'], accept_multiple_files=True)
 
         s1, s2 = st.columns(2)
         with s1:
@@ -697,38 +779,37 @@ def show_edit_property_form(property_id):
 
         if submitted:
             if all([titre, type_bien, transaction, description]):
-                update_property(property_id, titre, type_bien, transaction, property_data[7], taille, prix, description, is_featured)
-                if uploaded_files:
-                    save_image_set(property_id, uploaded_files)
-                notify("success", "Modifié !")
-                st.session_state.editing_property_id = None
-                time.sleep(0.6)
-                st.rerun()
+                try:
+                    db_manager.update_property(property_id, titre, type_bien, transaction,
+                                             property_data['situation_geo'], taille, prix,
+                                             description, is_featured)
+                    if uploaded_files:
+                        save_image_set(property_id, uploaded_files)
+                    notify("success", "Modifié !")
+                    st.session_state.editing_property_id = None
+                    time.sleep(0.6)
+                    st.rerun()
+                except DatabaseError as exc:
+                    erreur_attendue(exc)
             else:
-                notify("error", "Champs requis manquants.")
+                notify("error", "Veuillez remplir tous les champs obligatoires (*).")
         if cancelled:
             st.session_state.editing_property_id = None
             st.rerun()
 
 
 # ================================================================
-# GESTION DES CLIENTS & UTILISATEURS
+# CLIENTS ET UTILISATEURS
 # ================================================================
 
 def show_my_clients():
     user = st.session_state.user
     try:
-        query = """
-        SELECT u.*, ca.created_at as assigned_date
-        FROM users u
-        JOIN client_assignments ca ON u.id = ca.client_id
-        WHERE ca.agent_id = %s AND ca.is_active = TRUE AND u.role = 'client'
-        ORDER BY ca.created_at DESC
-        """
-        clients = db_manager.execute_query(query, (user['id'],), fetch='all')
+        # Un manager suit tous les clients de la plateforme.
+        clients = db_manager.get_clients_for_agent(user['id'], role=user['role'])
         if not clients:
             st.info("Aucun client assigné.")
-            st.caption("Vos clients assignés par le manager apparaîtront ici.")
+            st.caption("Les clients assignés par le manager apparaîtront ici.")
             return
         cols = st.columns(2, gap="medium")
         for idx, client in enumerate(clients):
@@ -736,19 +817,21 @@ def show_my_clients():
                 with st.container(border=True):
                     c1, c2 = st.columns([3, 1])
                     with c1:
-                        st.markdown(f"**{client[5]} {client[6] or ''}**")
-                        st.markdown(f"<span style='color:var(--muted);font-size:0.88rem;'>{client[2]} · {client[8] or 'tél. n.r.'}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**{e(client.get('nom'))} {e(client.get('prenom'))}**")
+                        st.markdown(f"<span style='color:var(--muted);font-size:0.88rem;'>{e(client.get('email'))} · {e(client.get('telephone') or 'tel. n.r.')}</span>", unsafe_allow_html=True)
                     with c2:
-                        st.markdown(f"<span style='color:var(--faint);font-size:0.8rem;'>Assigné le<br><b>{client[-1].strftime('%d/%m/%Y')}</b></span>", unsafe_allow_html=True)
-    except Exception as e:
-        st.error(f"Erreur : {str(e)}")
+                        date_affectation = client.get('assigned_date')
+                        affichage = date_affectation.strftime('%d/%m/%Y') if date_affectation else '-'
+                        st.markdown(f"<span style='color:var(--faint);font-size:0.8rem;'>Assigné le<br><b>{e(affichage)}</b></span>", unsafe_allow_html=True)
+    except DatabaseError as exc:
+        erreur_attendue(exc)
 
 
 def show_manage_users():
     tab1, tab2 = st.tabs(["Utilisateurs", "Assignations"])
     with tab1:
         try:
-            users = db_manager.execute_query("SELECT * FROM users ORDER BY role, nom", fetch='all')
+            users = db_manager.get_all_users(include_inactive=True)
             if not users:
                 st.info("Aucun utilisateur.")
                 return
@@ -758,30 +841,30 @@ def show_manage_users():
                     c1, c2, c3 = st.columns([2.6, 1, 1.2])
                     with c1:
                         st.markdown(
-                            f"**{user[5]} {user[6] or ''}** "
-                            f"<span class='status-badge status-completed'>{roles.get(user[4], user[4])}</span>"
-                            f"<br><span style='color:var(--muted);font-size:0.85rem;'>{user[1]} · {user[2]}</span>",
+                            f"**{e(user.get('nom'))} {e(user.get('prenom'))}** "
+                            f"<span class='status-badge status-completed'>{e(roles.get(user.get('role'), user.get('role')))}</span>"
+                            f"<br><span style='color:var(--muted);font-size:0.85rem;'>{e(user.get('username'))} · {e(user.get('email'))}</span>",
                             unsafe_allow_html=True
                         )
                     with c2:
-                        badge_cls = "status-confirmed" if user[11] else "status-cancelled"
-                        libelle = "Actif" if user[11] else "Inactif"
+                        badge_cls = "status-confirmed" if user.get('is_active') else "status-cancelled"
+                        libelle = "Actif" if user.get('is_active') else "Inactif"
                         st.markdown(f"<span class='status-badge {badge_cls}'>• {libelle}</span>", unsafe_allow_html=True)
                     with c3:
-                        if user[4] != 'manager':
-                            action = "Désactiver" if user[11] else "Activer"
-                            if st.button(action, key=f"toggle_user_{user[0]}", width='stretch', type="secondary"):
-                                toggle_user_status(user[0], not user[11])
+                        if user.get('role') != 'manager':
+                            action = "Désactiver" if user.get('is_active') else "Activer"
+                            if st.button(action, key=f"toggle_user_{user['id']}", width='stretch', type="secondary"):
+                                db_manager.set_user_active(user['id'], not user.get('is_active'))
                                 st.rerun()
-        except Exception as e:
-            st.error(f"Erreur : {str(e)}")
+        except DatabaseError as exc:
+            erreur_attendue(exc)
     with tab2:
         try:
             clients = db_manager.get_all_users('client')
             agents = db_manager.get_all_users('agent')
             if clients and agents:
-                c_opts = {f"{c[5]} {c[6] or ''}".strip(): c[0] for c in clients}
-                a_opts = {f"{a[5]} {a[6] or ''}".strip(): a[0] for a in agents}
+                c_opts = {f"{c['nom']} {c['prenom'] or ''}".strip(): c['id'] for c in clients}
+                a_opts = {f"{a['nom']} {a['prenom'] or ''}".strip(): a['id'] for a in agents}
                 with st.container(border=True):
                     col_c, col_a, col_b = st.columns([1, 1, 0.8])
                     with col_c:
@@ -791,13 +874,16 @@ def show_manage_users():
                     with col_b:
                         st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
                         if st.button("Assigner", width='stretch', type="primary"):
-                            db_manager.assign_client_to_agent(c_opts[sel_c], a_opts[sel_a], st.session_state.user['id'])
-                            notify("success", "Assignation réussie !")
-                            st.balloons()
+                            try:
+                                db_manager.assign_client_to_agent(c_opts[sel_c], a_opts[sel_a], st.session_state.user['id'])
+                                notify("success", "Assignation réussie !")
+                                st.balloons()
+                            except DatabaseError as exc:
+                                erreur_attendue(exc)
             else:
                 notify("warning", "Il faut au moins un client et un agent actifs pour faire une assignation.")
-        except Exception as e:
-            st.error(f"Erreur : {str(e)}")
+        except DatabaseError as exc:
+            erreur_attendue(exc)
 
 
 # ================================================================
@@ -827,7 +913,7 @@ def show_statistics():
             st.metric("Rendez-vous", total_appointments)
         with c4:
             conversion = business_metrics.get('conversion_rate', 0)
-            st.metric("Taux de conversion", f"{conversion:.1f}%" if total_appointments else "—")
+            st.metric("Taux de conversion", f"{conversion:.1f}%" if total_appointments else "-")
 
         st.divider()
 
@@ -837,7 +923,7 @@ def show_statistics():
             df_prices = property_analytics.get('price_stats_df')
             if df_prices is not None and not df_prices.empty:
                 df_prices['transaction_label'] = df_prices['transaction_type'].map(TRANSACTION_LABELS)
-                fig = px.bar(df_prices, x='transaction_label', y='avg_price',
+                fig = px.bar(df_prices, x='transaction_label', y='prix_moyen',
                              title="Prix moyen par type de transaction", **PX_BASE)
                 fig.update_traces(marker_color=["#1B4A38", "#D19A2F"],
                                   texttemplate="%{y:,.0f}", textposition="outside", cliponaxis=False)
@@ -900,8 +986,8 @@ def show_statistics():
             df_perf = appointment_analytics.get('agent_performance_df')
             if df_perf is not None and not df_perf.empty:
                 df_perf['Agent'] = df_perf['Nom'] + ' ' + df_perf['Prenom'].fillna('')
-                fig = px.bar(df_perf.head(10), x='Agent', y='RDV_Gérés', title="Performance des agents (RDV gérés)", **PX_BASE)
-                fig.update_traces(marker_color="#3A6B8A", text=df_perf['RDV_Gérés'].head(10), textposition="outside", cliponaxis=False)
+                fig = px.bar(df_perf.head(10), x='Agent', y='RDV_Geres', title="Performance des agents (RDV gérés)", **PX_BASE)
+                fig.update_traces(marker_color="#3A6B8A", text=df_perf['RDV_Geres'].head(10), textposition="outside", cliponaxis=False)
                 fig.update_xaxes(tickangle=25)
                 _fig_layout(fig)
                 st.plotly_chart(fig, width='stretch')
@@ -909,7 +995,7 @@ def show_statistics():
         with tab4:
             combos = business_metrics.get('popular_combinations_df')
             if combos is not None and not combos.empty:
-                combos['Combinaison'] = combos['Type'] + ' — ' + combos['Transaction'].map(TRANSACTION_LABELS)
+                combos['Combinaison'] = combos['Type'] + ' - ' + combos['Transaction'].map(TRANSACTION_LABELS)
                 fig = px.bar(combos.head(10), x='Combinaison', y='Nombre', title="Top des combinaisons type / transaction", **PX_BASE)
                 fig.update_traces(marker_color="#B6482F", text=combos['Nombre'].head(10), textposition="outside", cliponaxis=False)
                 fig.update_xaxes(tickangle=25)
@@ -918,7 +1004,7 @@ def show_statistics():
 
             df_fav = business_metrics.get('most_favorited_df')
             if df_fav is not None and not df_fav.empty:
-                fig = px.bar(df_fav.head(10), x='Propriété', y='Favoris', title="Propriétés les plus mises en favori", **PX_BASE)
+                fig = px.bar(df_fav.head(10), x='Propriete', y='Favoris', title="Propriétés les plus mises en favori", **PX_BASE)
                 fig.update_traces(marker_color="#2E7D5B", text=df_fav['Favoris'].head(10), textposition="outside", cliponaxis=False)
                 fig.update_xaxes(tickangle=30)
                 _fig_layout(fig)
@@ -926,37 +1012,24 @@ def show_statistics():
 
             if portfolio_value:
                 avg_v = business_metrics.get('portfolio_value', (0, 0))[1]
-                cA, cB = st.columns(2)
+                revenu_locatif, nb_loues = business_metrics.get('rental_income', (0, 0))
+                cA, cB, cC = st.columns(3)
                 with cA:
-                    st.metric("Valeur totale du portefeuille", fmt_fcfa(portfolio_value))
+                    st.metric("Valeur du portefeuille (vente)", fmt_prix(portfolio_value))
                 with cB:
-                    st.metric("Prix moyen d'un bien", fmt_fcfa(avg_v) if avg_v else "N/A")
+                    st.metric("Prix moyen d'un bien", fmt_prix(avg_v) if avg_v else "N/A")
+                with cC:
+                    st.metric("Revenu locatif mensuel", fmt_prix(revenu_locatif) if revenu_locatif else "N/A")
 
-    except Exception as e:
-        st.error(f"Erreur lors du chargement des statistiques : {str(e)}")
-        st.exception(e)
+    except DatabaseError as exc:
+        erreur_attendue(exc)
+    except Exception as exc:
+        erreur_attendue(exc, "Erreur lors du chargement des statistiques.")
 
 
 # ================================================================
 # Helpers
 # ================================================================
-
-def update_appointment_status(appointment_id, status):
-    return db_manager.execute_query("UPDATE appointments SET status = %s WHERE id = %s", (status, appointment_id))
-
-
-def toggle_property_status(property_id, is_available):
-    return db_manager.execute_query("UPDATE properties SET is_available = %s WHERE id = %s", (is_available, property_id))
-
-
-def toggle_user_status(user_id, is_active):
-    return db_manager.execute_query("UPDATE users SET is_active = %s WHERE id = %s", (is_active, user_id))
-
-
-def update_property(property_id, titre, type_bien, transaction_type, situation_geo, taille, prix, description, is_featured):
-    query = "UPDATE properties SET titre = %s, type_bien = %s, transaction_type = %s, situation_geo = %s, taille = %s, prix = %s, description = %s, is_featured = %s WHERE id = %s"
-    return db_manager.execute_query(query, (titre, type_bien, transaction_type, situation_geo, taille, prix, description, is_featured, property_id))
-
 
 if __name__ == "__main__":
     main()

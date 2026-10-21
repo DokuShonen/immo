@@ -44,12 +44,65 @@ Notre plateforme est conçue autour d'un système de rôles robuste, offrant une
 
 ---
 
+## Installation
+
+```bash
+# 1. Dependances
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+
+# 2. Base de donnees
+cp .env.example .env      # puis renseignez DATABASE_URL
+createdb immopro          # ou CREATE DATABASE immopro;
+psql immopro -f immo.sql  # schema et donnees de demonstration
+
+# 3. Migrations (sur une base deja en service)
+./venv/bin/python migrate.py
+
+# 4. Lancement
+./venv/bin/streamlit run app.py
+```
+
+### Comptes de démonstration
+
+Les quatre comptes partagent le mot de passe `ImmoPro2026!` :
+`admin` (manager), `agent1` (agent), `bailleur1` (bailleur), `client1` (client).
+Ce sont des exemples : changez-les avant toute mise en ligne.
+
+### Tests
+
+```bash
+./venv/bin/python -m unittest discover -s tests -v
+```
+
+La suite couvre la logique metier (authentification, limitation des tentatives,
+droits du manager, conflits de rendez-vous, pagination, transactions) et le
+rendu de chaque espace de l'interface.
+
+---
+
 ## Comment Démarrer
 
 1. **Visitez la page d'accueil** pour commencer à explorer les propriétés.
 2. **Utilisez les filtres** en haut de la page pour trouver ce que vous cherchez.
 3. **Inscrivez-vous** en cliquant sur le bouton "S'inscrire" pour débloquer les fonctionnalités de prise de rendez-vous et de gestion des favoris.
 4. **Connectez-vous** pour accéder à votre espace personnel.
+
+---
+
+## Sécurité
+
+- Mots de passe hachés avec bcrypt, jamais stockés en clair.
+- Toute donnée saisie par un utilisateur est échappée avant d'être injectée
+  en HTML : une annonce ne peut plus transporter de code exécutable.
+- Un compte désactivé ne peut plus se connecter.
+- Les tentatives de connexion sont limitées à cinq échecs par identifiant et
+  par adresse IP sur quinze minutes.
+- Les messages d'erreur techniques ne sont jamais affichés : ils sont
+  journalisés côté serveur, l'utilisateur reçoit un message générique.
+- L'inscription publique n'accepte que les rôles `client` et `bailleur`.
+- Toutes les requêtes SQL sont paramétrées, y compris les tris et les
+  filtres.
 
 ---
 
