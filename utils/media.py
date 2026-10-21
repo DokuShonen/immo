@@ -105,6 +105,45 @@ def get_uploaded_images(property_id):
     return [os.path.join(prop_dir, f) for f in fichiers]
 
 
+def get_uploaded_images_map(property_ids):
+    """Images de plusieurs proprietes en une seule requete.
+
+    Sans cela, chaque carte affichee declenchait une requete vers la base :
+    la page prenait autant de requetes que de biens affiches.
+    """
+    ids = [int(i) for i in property_ids if i]
+    if not ids:
+        return {}
+
+    try:
+        result = db_manager.execute_query(
+            "SELECT property_id, image_path FROM property_images "
+            "WHERE property_id = ANY(%s) ORDER BY id",
+            (ids,),
+            fetch='all',
+        )
+    except DatabaseError:
+        result = []
+
+    images = {}
+    for row in result or []:
+        images.setdefault(row['property_id'], []).append(row['image_path'])
+
+    for identifiant in ids:
+        if identifiant not in images:
+            prop_dir = os.path.join(UPLOAD_DIR, str(identifiant))
+            if os.path.isdir(prop_dir):
+                fichiers = sorted(
+                    f for f in os.listdir(prop_dir)
+                    if f.lower().endswith(EXTENSIONS_AUTORISEES)
+                )
+                if fichiers:
+                    images[identifiant] = [
+                        os.path.join(prop_dir, f) for f in fichiers]
+
+    return images
+
+
 def save_image_set(property_id, uploaded_files):
     """Enregistre les images d'une propriete : sur le disque et en base."""
     if not uploaded_files:
@@ -136,7 +175,7 @@ def save_image_set(property_id, uploaded_files):
     return ecrits
 
 
-def property_image_uri(prop, index=0):
+def property_image_uri(prop, index=0, images=None):
     """Image principale d'une propriete, pretee a etre placee dans un src.
 
     Les images importees sont servies en URL de donnees : le navigateur
@@ -146,9 +185,10 @@ def property_image_uri(prop, index=0):
     type_bien = prop.get('type_bien') if isinstance(prop, dict) else (prop[4] if len(prop) > 4 else None)
     type_bien = type_bien or "Maison"
 
-    importees = get_uploaded_images(identifiant)
-    if importees and index < len(importees):
-        chemin = importees[index]
+    if images is None:
+        images = get_uploaded_images(identifiant)
+    if images and index < len(images):
+        chemin = images[index]
         try:
             uri = _data_uri(chemin, os.path.getmtime(chemin))
         except OSError:

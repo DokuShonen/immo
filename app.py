@@ -13,8 +13,14 @@ import plotly.express as px
 sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
 
 from utils.auth import auth_manager
-from utils.database import DatabaseError, db_manager, log_exception
-from utils.media import fmt_prix, prix_affichage, property_image_uri, get_uploaded_images, save_image_set
+from utils.database import (
+    DatabaseError, biens_en_cache, bornes_prix_en_cache, compte_biens_en_cache,
+    db_manager, log_exception, statistiques_en_cache, vider_cache,
+)
+from utils.media import (
+    fmt_prix, get_uploaded_images_map, prix_affichage, property_image_uri,
+    save_image_set,
+)
 from styles import inject_styles
 from layout_utils import (
     show_public_hero, show_perks, show_section_title, show_result_bar, show_sidebar_brand,
@@ -108,7 +114,7 @@ def main():
 
 def show_public_access():
     try:
-        stats = db_manager.get_statistics()
+        stats = statistiques_en_cache()
     except DatabaseError:
         stats = {}
 
@@ -224,7 +230,7 @@ def _liste_filtres(prefix):
         transaction_filter = st.selectbox("Transaction", ["Tous", "vente", "location"],
                                           format_func=lambda x: "Toutes" if x == "Tous" else TRANSACTION_LABELS.get(x, x),
                                           key=f"{prefix}_trans")
-    pmin, pmax = db_manager.get_price_bounds()
+    pmin, pmax = bornes_prix_en_cache()
     with c4:
         prix_min = st.number_input("Prix min (EUR)", min_value=0, value=pmin, step=50000, key=f"{prefix}_pmin")
     with c5:
@@ -264,12 +270,12 @@ def show_listings(filters_key_prefix, role=None, public_view=False):
         st.session_state[page_key] = 0
 
     try:
-        total = db_manager.get_properties(filters, count_only=True)
+        total = compte_biens_en_cache(filters)
         nb_pages = max(1, (total + BIENS_PAR_PAGE - 1) // BIENS_PAR_PAGE)
         if st.session_state[page_key] >= nb_pages:
             st.session_state[page_key] = nb_pages - 1
 
-        properties = db_manager.get_properties(
+        properties = biens_en_cache(
             filters,
             sort=sort_map[c_sort],
             limit=BIENS_PAR_PAGE,
@@ -281,10 +287,12 @@ def show_listings(filters_key_prefix, role=None, public_view=False):
 
     if properties:
         show_result_bar(total)
+        images = get_uploaded_images_map([p['id'] for p in properties])
         cols = st.columns(3, gap="medium")
         for idx, prop in enumerate(properties):
             with cols[idx % 3]:
-                display_property_card(prop, user_role=role, public_view=public_view)
+                display_property_card(prop, user_role=role, public_view=public_view,
+                                      images=images.get(prop['id'], []))
 
         if nb_pages > 1:
             c_prec, c_info, c_suiv = st.columns([1, 2, 1])
@@ -308,7 +316,7 @@ def show_listings(filters_key_prefix, role=None, public_view=False):
 # CARTE PROPRIETE
 # ================================================================
 
-def display_property_card(prop, user_role=None, public_view=False):
+def display_property_card(prop, user_role=None, public_view=False, images=None):
     pid = prop['id']
     dk = f"details_visible_{pid}"
     ak = f"appointment_form_visible_{pid}"
@@ -333,7 +341,7 @@ def display_property_card(prop, user_role=None, public_view=False):
     st.markdown(f"""
     <div class="prop-card">
         <div class="prop-media">
-            <img src="{e(property_image_uri(prop))}" alt="{e(prop.get('titre'))}" loading="lazy">
+            <img src="{e(property_image_uri(prop, images=images))}" alt="{e(prop.get('titre'))}" loading="lazy">
             <div class="prop-tags">{tags}</div>
             <div class="prop-price-badge">{price_html}</div>
         </div>
@@ -354,11 +362,11 @@ def display_property_card(prop, user_role=None, public_view=False):
             st.session_state[dk] = True
             st.rerun()
     else:
-        _show_property_details(prop, pid, dk, ak, user_role, public_view)
+        _show_property_details(prop, pid, dk, ak, user_role, public_view, images)
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-def _show_property_details(prop, pid, dk, ak, user_role, public_view):
+def _show_property_details(prop, pid, dk, ak, user_role, public_view, images=None):
     is_featured = bool(prop.get('is_featured'))
     transaction = prop.get('transaction_type')
     trans_label = TRANSACTION_LABELS.get(transaction, transaction)
@@ -373,7 +381,6 @@ def _show_property_details(prop, pid, dk, ak, user_role, public_view):
         </div>
         """, unsafe_allow_html=True)
 
-        images = get_uploaded_images(pid)
         if images:
             st.markdown('<div style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin:4px 0 8px;">Photos</div>', unsafe_allow_html=True)
             img_cols = st.columns(min(len(images), 3))
@@ -538,6 +545,7 @@ def show_appointment_form(property_id, show_title=True):
                             st.session_state.user['id'], property_id, agent_id,
                             moment, type_rdv, notes
                         )
+                        vider_cache()
                         st.toast("Rendez-vous cree !", icon=":material/celebration:")
                         st.session_state[f"appointment_form_visible_{property_id}"] = False
                         time.sleep(0.6)
@@ -591,6 +599,7 @@ def show_client_appointments_view():
                 if apt.get('status') == 'pending':
                     if st.button("Annuler ce rendez-vous", key=f"cancel_{apt['id']}", width='stretch'):
                         db_manager.update_appointment_status(apt['id'], 'cancelled')
+                        vider_cache()
                         notify("success", "Rendez-vous annule")
                         st.rerun()
     except DatabaseError as exc:
@@ -620,10 +629,12 @@ def show_agent_appointments_view():
                 if apt.get('status') == 'pending':
                     if st.button("Confirmer", key=f"confirm_{apt['id']}", width='stretch', type="primary"):
                         db_manager.update_appointment_status(apt['id'], 'confirmed')
+                        vider_cache()
                         st.rerun()
                 if apt.get('status') in ['pending', 'confirmed']:
                     if st.button("Marquer termine", key=f"complete_{apt['id']}", width='stretch'):
                         db_manager.update_appointment_status(apt['id'], 'completed')
+                        vider_cache()
                         st.rerun()
     except DatabaseError as exc:
         erreur_attendue(exc)
@@ -641,10 +652,12 @@ def show_favorites():
             st.caption("Ajoutez des biens a vos favoris depuis la page « Voir les proprietes ».")
             return
         show_result_bar(len(favorites))
+        images = get_uploaded_images_map([p['id'] for p in favorites])
         cols = st.columns(3, gap="medium")
         for idx, prop in enumerate(favorites):
             with cols[idx % 3]:
-                display_property_card(prop, user_role='client', public_view=False)
+                display_property_card(prop, user_role='client', public_view=False,
+                                      images=images.get(prop['id'], []))
     except DatabaseError as exc:
         erreur_attendue(exc)
 
@@ -691,6 +704,7 @@ def show_add_property():
                     if property_id_tuple:
                         if uploaded_files:
                             save_image_set(property_id_tuple['id'], uploaded_files)
+                        vider_cache()
                         notify("success", "Propriété ajoutée !")
                     else:
                         notify("error", "Erreur lors de l'ajout.")
@@ -734,6 +748,7 @@ def show_my_properties():
                         status_text = "Masquer" if prop.get('is_available') else "Activer"
                         if st.button(status_text, key=f"toggle_{prop['id']}", width='stretch', type="secondary"):
                             db_manager.toggle_property_status(prop['id'], not prop.get('is_available'))
+                            vider_cache()
                             st.rerun()
     except DatabaseError as exc:
         erreur_attendue(exc)
@@ -785,6 +800,7 @@ def show_edit_property_form(property_id):
                                              description, is_featured)
                     if uploaded_files:
                         save_image_set(property_id, uploaded_files)
+                    vider_cache()
                     notify("success", "Modifié !")
                     st.session_state.editing_property_id = None
                     time.sleep(0.6)
@@ -855,6 +871,7 @@ def show_manage_users():
                             action = "Désactiver" if user.get('is_active') else "Activer"
                             if st.button(action, key=f"toggle_user_{user['id']}", width='stretch', type="secondary"):
                                 db_manager.set_user_active(user['id'], not user.get('is_active'))
+                                vider_cache()
                                 st.rerun()
         except DatabaseError as exc:
             erreur_attendue(exc)
@@ -876,6 +893,7 @@ def show_manage_users():
                         if st.button("Assigner", width='stretch', type="primary"):
                             try:
                                 db_manager.assign_client_to_agent(c_opts[sel_c], a_opts[sel_a], st.session_state.user['id'])
+                                vider_cache()
                                 notify("success", "Assignation réussie !")
                                 st.balloons()
                             except DatabaseError as exc:

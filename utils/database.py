@@ -5,10 +5,13 @@ de dictionnaires : l'acces par nom de colonne evite qu'un simple
 reordonnancement du schema casse silencieusement l'application.
 """
 import os
+import threading
+import time
 from contextlib import contextmanager
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -34,16 +37,57 @@ class DatabaseManager:
             raise ValueError(
                 "DATABASE_URL non définie dans les variables d'environnement ou st.secrets"
             )
+        self._pool = None
+        self._pool_lock = threading.Lock()
 
     # ------------------------------------------------------------------
-    # Connexion
+    # Connexions
     # ------------------------------------------------------------------
+    @property
+    def pool(self):
+        """Pool de connexions reutilisees.
+
+        Ouvrir une connexion a chaque requete coute environ une seconde
+        quand la base est distante : le pool supprime ce cout.
+        """
+        if self._pool is None:
+            with self._pool_lock:
+                if self._pool is None:
+                    self._pool = psycopg2.pool.ThreadedConnectionPool(
+                        1, 5, self.connection_string
+                    )
+        return self._pool
+
+    def _reinitialiser_pool(self):
+        """Referme le pool, utilise apres une erreur de connexion."""
+        with self._pool_lock:
+            if self._pool is not None:
+                try:
+                    self._pool.closeall()
+                except Exception:
+                    pass
+                self._pool = None
+
     @contextmanager
     def get_db_connection(self):
         conn = None
         try:
-            conn = psycopg2.connect(self.connection_string)
+            conn = self.pool.getconn()
             yield conn
+        except psycopg2.OperationalError as exc:
+            # Connexion perdue (base redemarrée, reseau coupe) : on referme
+            # le pool pour que la prochaine requete reparte sur une base saine.
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = None
+            self._reinitialiser_pool()
+            log_exception("connexion à la base", exc)
+            raise DatabaseError(
+                "La base de données est momentanément indisponible. Réessayez dans un instant."
+            ) from exc
         except psycopg2.Error as exc:
             if conn:
                 conn.rollback()
@@ -52,15 +96,34 @@ class DatabaseManager:
                 "La base de données est momentanément indisponible. Réessayez dans un instant."
             ) from exc
         finally:
-            if conn:
-                conn.close()
+            if conn is not None:
+                try:
+                    self.pool.putconn(conn)
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
-    def execute_query(self, query, params=None, fetch=None, commit=None):
+    def execute_query(self, query, params=None, fetch=None, commit=None, retries=1):
         """Execute une requete et renvoie les lignes demandees.
 
         fetch : None (defaut), 'one' ou 'all'.
         commit : None pour déduire de la requete, True ou False pour forcer.
+        retries : nombre de tentatives en cas de perte de connexion.
         """
+        for tentative in range(retries + 1):
+            try:
+                return self._execute_once(query, params, fetch, commit)
+            except DatabaseError:
+                if tentative >= retries:
+                    raise
+                # Perte de connexion : on referme le pool et on reessaye.
+                self._reinitialiser_pool()
+                time.sleep(0.3)
+        raise DatabaseError("La requete n'a pas pu aboutir.")
+
+    def _execute_once(self, query, params=None, fetch=None, commit=None):
         with self.get_db_connection() as conn:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -505,16 +568,25 @@ class DatabaseManager:
     # Statistiques
     # ------------------------------------------------------------------
     def get_statistics(self):
+        """Chiffres cles de la plateforme.
+
+        Les compteurs simples sont regroupes dans une seule requete : sur
+        une base distante, chaque aller-retour compte.
+        """
         stats = {}
 
         result = self.execute_query(
-            "SELECT COUNT(*) AS nb FROM properties WHERE is_available = TRUE", fetch='one')
-        stats['total_properties'] = int(result['nb']) if result else 0
-
-        result = self.execute_query(
-            "SELECT COUNT(DISTINCT situation_geo) AS nb FROM properties WHERE is_available = TRUE",
-            fetch='one')
-        stats['total_cities'] = int(result['nb']) if result else 0
+            """
+            SELECT
+                (SELECT COUNT(*) FROM properties WHERE is_available = TRUE) AS total_properties,
+                (SELECT COUNT(DISTINCT situation_geo) FROM properties WHERE is_available = TRUE) AS total_cities,
+                (SELECT COUNT(*) FROM appointments) AS total_appointments
+            """,
+            fetch='one',
+        )
+        stats['total_properties'] = int(result['total_properties']) if result else 0
+        stats['total_cities'] = int(result['total_cities']) if result else 0
+        stats['total_appointments'] = int(result['total_appointments']) if result else 0
 
         result = self.execute_query(
             "SELECT type_bien, COUNT(*) AS nb FROM properties WHERE is_available = TRUE "
@@ -532,10 +604,6 @@ class DatabaseManager:
             fetch='all')
         stats['users_by_role'] = {r['role']: int(r['nb']) for r in result} if result else {}
 
-        result = self.execute_query(
-            "SELECT COUNT(*) AS nb FROM appointments", fetch='one')
-        stats['total_appointments'] = int(result['nb']) if result else 0
-
         return stats
 
 
@@ -547,3 +615,77 @@ def log_exception(contexte, exc):
 
 
 db_manager = DatabaseManager()
+
+
+# ----------------------------------------------------------------------
+# Lectures mises en cache
+# ----------------------------------------------------------------------
+# L'interface recharge le script a chaque interaction. Sans cache, chaque
+# rechargementaskingait autant d'allers-retours vers la base, ce qui est
+# long des que la base est distante. Les lectures repetees sont donc
+# memorisees quelques dizaines de secondes, et le cache est vide apres
+# chaque ecriture.
+
+DUREE_CACHE = 30
+DUREE_CACHE_STATS = 120
+
+
+def _cle_filtres(filtres):
+    """Transforme un dictionnaire de filtres en cle hashtable."""
+    if not filtres:
+        return ()
+    return tuple(sorted((k, str(v)) for k, v in filtres.items() if v not in (None, '')))
+
+
+def _reconstruire_filtres(cle):
+    """Retrouve le dictionnaire de filtres a partir de sa cle."""
+    return dict(cle) if cle else {}
+
+
+@st.cache_data(ttl=DUREE_CACHE, show_spinner=False)
+def _biens_cache(filtres, sort, limit, offset, bailleur_id):
+    return db_manager.get_properties(
+        _reconstruire_filtres(filtres), sort=sort, bailleur_id=bailleur_id,
+        limit=limit, offset=offset)
+
+
+@st.cache_data(ttl=DUREE_CACHE, show_spinner=False)
+def _compte_biens_cache(filtres, bailleur_id):
+    return db_manager.get_properties(
+        _reconstruire_filtres(filtres), count_only=True, bailleur_id=bailleur_id)
+
+
+@st.cache_data(ttl=DUREE_CACHE_STATS, show_spinner=False)
+def _statistiques_cache():
+    return db_manager.get_statistics()
+
+
+@st.cache_data(ttl=DUREE_CACHE, show_spinner=False)
+def _bornes_prix_cache():
+    return db_manager.get_price_bounds()
+
+
+def biens_en_cache(filtres, sort='recent', limit=9, offset=0, bailleur_id=None):
+    return _biens_cache(_cle_filtres(filtres), sort, limit, offset, bailleur_id)
+
+
+def compte_biens_en_cache(filtres, bailleur_id=None):
+    return _compte_biens_cache(_cle_filtres(filtres), bailleur_id)
+
+
+def statistiques_en_cache():
+    return _statistiques_cache()
+
+
+def bornes_prix_en_cache():
+    return _bornes_prix_cache()
+
+
+def vider_cache():
+    """Vide le cache apres une ecriture."""
+    for fonction in (_biens_cache, _compte_biens_cache, _statistiques_cache,
+                     _bornes_prix_cache):
+        try:
+            fonction.clear()
+        except Exception:
+            pass
